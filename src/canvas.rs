@@ -102,6 +102,8 @@ pub struct Piece {
     pub at: (f64, f64),
     /// The square's size in dots.
     pub square: (u16, u16),
+    /// Toppled over: 0 standing, 1 lying on its right side, -1 on its left.
+    pub fallen: f64,
 }
 
 impl Piece {
@@ -115,6 +117,22 @@ impl Piece {
         let left = (w - size) / 2.0;
         let bottom = h - PADDING_BELOW;
         ((dx + 0.5 - left) / size, (bottom - (dy + 0.5)) / size)
+    }
+
+    /// Where a point of the square's unit box falls on the piece once it has
+    /// toppled: turned about its middle, and let down as it turns so that it
+    /// ends up lying on the floor of the square rather than floating.
+    fn upright(&self, x: f64, y: f64) -> (f64, f64) {
+        if self.fallen == 0.0 {
+            return (x, y);
+        }
+        let angle = self.fallen * std::f64::consts::FRAC_PI_2;
+        // Lying down, the widest part (the foot, 0.3 either side of the
+        // middle) is what rests on the floor.
+        let drop = 0.18 * angle.sin().abs();
+        let (qx, qy) = (x - 0.5, y + drop - 0.5);
+        let (sin, cos) = angle.sin_cos();
+        (qx * cos - qy * sin + 0.5, qx * sin + qy * cos + 0.5)
     }
 }
 
@@ -130,11 +148,14 @@ impl Shape for Piece {
         // fraction of a dot the piece has travelled.
         let solid = |x: i64, y: i64| {
             let (ux, uy) = self.unit(x as f64 - fx, y as f64 - fy);
+            let (ux, uy) = self.upright(ux, uy);
             inside(self.role, ux, uy)
         };
 
-        for y in -1..=h {
-            for x in -1..=w {
+        // Halfway over, a toppling piece reaches out past its square.
+        let reach = if self.fallen == 0.0 { 1 } else { h / 2 };
+        for y in -reach..=h + reach {
+            for x in -reach..=w + reach {
                 if !solid(x, y) {
                     continue;
                 }

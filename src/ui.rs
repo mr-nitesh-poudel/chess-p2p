@@ -7,7 +7,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Wrap};
 use shakmaty::{Color as Side, File, Piece, Rank, Role, Square};
 
-use crate::app::{App, Conn, Slide};
+use crate::app::{App, Conn, Ending, Finale, Slide};
 use crate::canvas::{self, Dots};
 use crate::clipboard::Copied;
 use crate::game::PROMOTION_ROLES;
@@ -26,7 +26,11 @@ const MUTED: Color = Color::Rgb(128, 128, 128);
 /// Washed over a square you can move to, rather than replacing its colour, so
 /// the board underneath still reads.
 const TARGET: Color = Color::Rgb(106, 196, 84);
-const MARKER: Color = Color::Rgb(38, 92, 30);
+/// A king in check or mated, and the verdict.
+const MATE_RED: Color = Color::Rgb(222, 52, 44);
+const NIGHT: Color = Color::Rgb(0, 0, 0);
+const FLASH: Color = Color::Rgb(255, 255, 255);
+const VERDICT_BG: Color = Color::Rgb(22, 16, 14);
 
 /// How a piece is drawn. Each falls back to the next when a square is too
 /// small to carry it.
@@ -479,6 +483,11 @@ pub fn draw(f: &mut Frame, app: &App) {
     if app.game.promotion.is_some() {
         draw_promotion(f, &g, app);
     }
+    if let Some(fin) = app.finale()
+        && let Some(reveal) = fin.banner
+    {
+        draw_verdict(f, &g, app, &fin, reveal);
+    }
 }
 
 fn draw_board(f: &mut Frame, g: &Geometry, app: &App) {
@@ -490,6 +499,8 @@ fn draw_board(f: &mut Frame, g: &Geometry, app: &App) {
 
     // Whatever is sliding is drawn on top afterwards, not in place.
     let travelling = app.slide_at().map(|(s, _)| s.to);
+    let finale = app.finale();
+    let check = app.check_glow();
 
     for row in 0..8u32 {
         let rank = if app.flipped { row } else { 7 - row };
@@ -533,17 +544,19 @@ fn draw_board(f: &mut Frame, g: &Geometry, app: &App) {
                     // Light enough that a green wash underneath still reads.
                     bg = blend(bg, CURSOR, 0.5);
                 }
+                if let Some((king, glow)) = check
+                    && sq == king
+                {
+                    bg = blend(bg, MATE_RED, glow);
+                }
+                if let Some(fin) = &finale {
+                    bg = finale_bg(fin, sq, bg);
+                }
 
                 match piece {
                     Some(p) => spans.extend(piece_cell(p, sub, cw, ch, style, bg)),
                     None => {
-                        // The legal-move dot sits on the square's middle row.
-                        let content = if is_target && sub == ch / 2 {
-                            centre(&marker(cw).to_string(), cw)
-                        } else {
-                            " ".repeat(cw.into())
-                        };
-                        spans.push(Span::styled(content, Style::default().fg(MARKER).bg(bg)));
+                        spans.push(Span::styled(" ".repeat(cw.into()), Style::default().bg(bg)))
                     }
                 }
             }
@@ -575,11 +588,35 @@ fn draw_board(f: &mut Frame, g: &Geometry, app: &App) {
                 let Some(piece) = game.piece_at(sq).filter(|_| travelling != Some(sq)) else {
                     continue;
                 };
-                pieces.push(canvas_piece(piece, (col, row), (0.0, 0.0), g.cell));
+                let mut drawn = canvas_piece(piece, (col, row), (0.0, 0.0), g.cell);
+                if let Some(fin) = &finale {
+                    if sq == fin.king {
+                        drawn.at.0 += fin.shake;
+                        drawn.fallen = fin.fallen;
+                    } else if !fin.checkers.contains(&sq) {
+                        // Everything but the king and its killers fades back
+                        // with the board.
+                        drawn.colour = blend(drawn.colour, NIGHT, fin.dim * 0.6);
+                    }
+                }
+                pieces.push(drawn);
             }
         }
         canvas::stamp(f.buffer_mut(), g.grid, &pieces, dots);
     }
+}
+
+/// A square's background during the checkmate finale: the king's square
+/// burns red, the checkers' squares glow with it, and the rest goes dark.
+fn finale_bg(fin: &Finale, sq: Square, bg: Color) -> Color {
+    let bg = if sq == fin.king {
+        blend(bg, MATE_RED, fin.red)
+    } else if fin.checkers.contains(&sq) {
+        blend(bg, MATE_RED, 0.3)
+    } else {
+        blend(bg, NIGHT, fin.dim)
+    };
+    blend(bg, FLASH, fin.impact)
 }
 
 /// Which dots to draw the pieces in, if a canvas style is in use and the
@@ -619,6 +656,7 @@ fn canvas_piece(
             f64::from(row * square.1) + offset.1,
         ),
         square,
+        fallen: 0.0,
     }
 }
 
@@ -1096,10 +1134,6 @@ fn letter(role: Role) -> char {
     }
 }
 
-fn marker(cell_w: u16) -> char {
-    if cell_w >= 5 { '●' } else { '•' }
-}
-
 /// Pads `s` to `width` columns with the content centred.
 fn centre(s: &str, width: u16) -> String {
     let width = usize::from(width);
@@ -1335,6 +1369,127 @@ fn draw_promotion(f: &mut Frame, g: &Geometry, app: &App) {
             .collect();
         canvas::stamp(f.buffer_mut(), area, &pieces, dots);
     }
+}
+
+/// The letters of CHECKMATE and RESIGNED, five blocks square.
+fn glyph(c: char) -> [&'static str; 5] {
+    match c {
+        'C' => [" ████", "█    ", "█    ", "█    ", " ████"],
+        'H' => ["█   █", "█   █", "█████", "█   █", "█   █"],
+        'E' => ["█████", "█    ", "████ ", "█    ", "█████"],
+        'K' => ["█   █", "█  █ ", "███  ", "█  █ ", "█   █"],
+        'M' => ["█   █", "██ ██", "█ █ █", "█   █", "█   █"],
+        'A' => [" ███ ", "█   █", "█████", "█   █", "█   █"],
+        'T' => ["█████", "  █  ", "  █  ", "  █  ", "  █  "],
+        'R' => ["████ ", "█   █", "████ ", "█  █ ", "█   █"],
+        'S' => [" ████", "█    ", " ███ ", "    █", "████ "],
+        'I' => ["█████", "  █  ", "  █  ", "  █  ", "█████"],
+        'G' => [" ████", "█    ", "█  ██", "█   █", " ████"],
+        'N' => ["█   █", "██  █", "█ █ █", "█  ██", "█   █"],
+        'D' => ["████ ", "█   █", "█   █", "█   █", "████ "],
+        _ => ["     "; 5],
+    }
+}
+
+/// The verdict across the middle of the board, spelled out a letter at a
+/// time as `reveal` goes from 0 to 1. Each letter lands white hot and cools
+/// to red.
+fn draw_verdict(f: &mut Frame, g: &Geometry, app: &App, fin: &Finale, reveal: f32) {
+    let word = match fin.how {
+        Ending::Checkmate => "CHECKMATE",
+        Ending::Resignation => "RESIGNED",
+    };
+    let letters = word.len() as f32;
+    let shown = reveal * letters;
+    let colour = |i: usize| {
+        let age = shown - i as f32;
+        if age < 1.0 {
+            blend(FLASH, MATE_RED, age)
+        } else {
+            MATE_RED
+        }
+    };
+
+    let big_w = word.len() as u16 * 6 - 1;
+    let big = g.board.width >= big_w + 6 && g.board.height >= 13;
+    let mut lines = vec![Line::raw("")];
+    if big {
+        for row in 0..5 {
+            let mut spans = Vec::new();
+            for (i, c) in word.chars().enumerate() {
+                if i > 0 {
+                    spans.push(Span::raw(" "));
+                }
+                let text = if (i as f32) < shown {
+                    glyph(c)[row]
+                } else {
+                    "     "
+                };
+                spans.push(Span::styled(text, Style::default().fg(colour(i))));
+            }
+            lines.push(Line::from(spans).centered());
+        }
+    } else {
+        let spans: Vec<Span> = word
+            .chars()
+            .enumerate()
+            .map(|(i, c)| {
+                let text = if (i as f32) < shown { c } else { ' ' };
+                Span::styled(format!("{text} "), Style::default().fg(colour(i)).bold())
+            })
+            .collect();
+        lines.push(Line::from(spans).centered());
+    }
+    lines.push(Line::raw(""));
+
+    let done = reveal >= 1.0;
+    if done {
+        let loser = app.game.resigned.unwrap_or(app.game.turn());
+        let verdict = match (fin.how, app.me) {
+            (Ending::Checkmate, Some(me)) if me == loser => format!("{} wins", app.peer_label()),
+            (Ending::Checkmate, Some(_)) => "you win".to_string(),
+            (Ending::Checkmate, None) => format!("{} wins", side_name(!loser)),
+            (Ending::Resignation, Some(me)) if me == loser => "you resigned".to_string(),
+            (Ending::Resignation, Some(_)) => format!("{} resigned · you win", app.peer_label()),
+            (Ending::Resignation, None) => {
+                format!("{} resigns · {} wins", side_name(loser), side_name(!loser))
+            }
+        };
+        lines.push(Line::styled(verdict, Style::default().fg(FLASH).bold()).centered());
+        lines.push(Line::styled("any key to see the board", Style::default().fg(MUTED)).centered());
+    }
+
+    let width = if big {
+        big_w + 6
+    } else {
+        2 * word.len() as u16 + 8
+    }
+    .max(30);
+    let height = lines.len().max(if big { 10 } else { 5 }) as u16 + 2;
+    // In the half of the board away from the king, so the mate stays in
+    // view, if there is room there.
+    let half = g.grid.height / 2;
+    let king_row = app.finale().map_or(0, |fin| {
+        let row = 7 - fin.king.rank() as u16;
+        if app.flipped { 7 - row } else { row }
+    });
+    let away = Rect {
+        x: g.board.x,
+        y: if king_row < 4 {
+            g.grid.y + half
+        } else {
+            g.grid.y
+        },
+        width: g.board.width,
+        height: half,
+    };
+    let area = centred(if height <= half { away } else { g.board }, width, height);
+    f.render_widget(Clear, area);
+    let block = Block::bordered()
+        .border_type(BorderType::Thick)
+        .border_style(Style::default().fg(MATE_RED))
+        .style(Style::default().bg(VERDICT_BG));
+    f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn centred(area: Rect, w: u16, h: u16) -> Rect {
