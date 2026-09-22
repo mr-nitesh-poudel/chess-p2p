@@ -44,7 +44,7 @@ Right-click puts a piece back down. Everything works from the keyboard too:
 | arrows / `hjkl` | move the cursor |
 | `enter` / `space` | pick a piece up, or put it down |
 | `f` | flip the board |
-| `p` | cycle piece style: sprites, big letters, art, figurines, letters |
+| `p` | cycle piece style: octants, braille, sprites, big letters, art, figurines, letters |
 | `m` | turn mouse reporting off (see below) |
 | `c` | copy your share code, while you wait for an opponent |
 | `r` | resign (confirm with `y`) |
@@ -60,7 +60,31 @@ Promotion opens a prompt: click a piece, or `←`/`→` then `enter`, or press
 The board sizes itself to your terminal, from 3x1 squares up to 11x5, and draws
 the best pieces the square can carry.
 
-At 7x3 and above they are proper sprites. Every cell is drawn as `▀`, whose
+On squares of 9x4 and up the pieces are drawn with ratatui's `Canvas` widget,
+on a grid of two dots across and four down to each cell: 22x20 dots on the
+biggest board. Terminal cells are about twice as tall as they are wide, which
+makes the dots nearly square and lets the pieces keep their proportions. The
+pieces are vector silhouettes (circles, ellipses and polygons in a unit box,
+in `canvas.rs`) sampled at each dot, so the same drawing serves every square
+size, and a moving piece slides a dot at a time rather than a cell at a time.
+Where it passes over another piece, the two sets of dots are merged rather
+than one hiding the other.
+
+By default the dots are octants, which fill each dot in solid so a piece reads
+as one shape. Octants are new to Unicode (16.0), and a terminal that cannot
+draw them shows `�`; press `p` once for braille, the same dots drawn round with
+gaps between them, which every terminal can show. Ghostty, kitty, WezTerm and
+foot draw octants themselves, whatever the font.
+
+Every dot in a cell shares one colour, so each piece is one solid
+colour: white for white, near-black for black. A canvas also paints its whole area's background, which would wipe out the
+squares, so the pieces are drawn into a scratch buffer and only the cells with
+dots in them are copied onto the board.
+
+Below 9x4 there are too few dots to tell the pieces apart, so smaller squares
+use sprites instead.
+
+At 7x3 and above the other styles are proper sprites. Every cell is drawn as `▀`, whose
 foreground paints the top half and whose background paints the bottom, so each
 character holds two stacked pixels — a 9x4 square becomes a 9x8 bitmap. This
 needs nothing but truecolor, so it works in every terminal, with no image

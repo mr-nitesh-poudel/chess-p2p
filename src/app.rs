@@ -95,7 +95,7 @@ impl App {
             copied: None,
             conn: Conn::Local,
             flipped: false,
-            piece_style: PieceStyle::Blocks,
+            piece_style: PieceStyle::Octant,
             mouse: true,
             area: Rect::new(0, 0, 80, 24),
             drag_from: None,

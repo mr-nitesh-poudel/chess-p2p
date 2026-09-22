@@ -8,6 +8,7 @@ use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Wrap};
 use shakmaty::{Color as Side, File, Piece, Rank, Role, Square};
 
 use crate::app::{App, Conn, Slide};
+use crate::canvas::{self, Dots};
 use crate::clipboard::Copied;
 use crate::game::PROMOTION_ROLES;
 use crate::lobby::{Entry, Field, Item, Lobby, Row};
@@ -31,6 +32,11 @@ const MARKER: Color = Color::Rgb(38, 92, 30);
 /// small to carry it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PieceStyle {
+    /// Silhouettes drawn on a [`Canvas`](ratatui::widgets::canvas::Canvas)
+    /// in octants: eight solid dots to a cell. See [`crate::canvas`].
+    Octant,
+    /// The same silhouettes in braille, for terminals without octants.
+    Braille,
     /// Half-block sprites. Every cell drawn as `▀` holds two stacked pixels —
     /// its foreground on top, its background below — which buys the vertical
     /// resolution a recognisable piece needs.
@@ -53,7 +59,9 @@ impl PieceStyle {
             PieceStyle::BigLetter => PieceStyle::Art,
             PieceStyle::Art => PieceStyle::Figurine,
             PieceStyle::Figurine => PieceStyle::Letter,
-            PieceStyle::Letter => PieceStyle::Blocks,
+            PieceStyle::Letter => PieceStyle::Octant,
+            PieceStyle::Octant => PieceStyle::Braille,
+            PieceStyle::Braille => PieceStyle::Blocks,
         }
     }
 }
@@ -558,6 +566,69 @@ fn draw_board(f: &mut Frame, g: &Geometry, app: &App) {
         .border_style(Style::default().fg(MUTED))
         .title(Line::from(" chess ").centered());
     f.render_widget(Paragraph::new(lines).block(block), g.board);
+
+    if let Some(dots) = canvas_dots(style, cw, ch) {
+        let mut pieces = Vec::new();
+        for row in 0..8u16 {
+            for col in 0..8u16 {
+                let sq = screen_square(col, row, app.flipped);
+                let Some(piece) = game.piece_at(sq).filter(|_| travelling != Some(sq)) else {
+                    continue;
+                };
+                pieces.push(canvas_piece(piece, (col, row), (0.0, 0.0), g.cell));
+            }
+        }
+        canvas::stamp(f.buffer_mut(), g.grid, &pieces, dots);
+    }
+}
+
+/// Which dots to draw the pieces in, if a canvas style is in use and the
+/// square has room for one. Below 9x4 the detail goes (the king's cross
+/// shrinks to a dot), so smaller squares get the half-block sprites instead.
+fn canvas_dots(style: PieceStyle, cw: u16, ch: u16) -> Option<Dots> {
+    let dots = match style {
+        PieceStyle::Octant => Dots::Octant,
+        PieceStyle::Braille => Dots::Braille,
+        _ => return None,
+    };
+    (cw >= 9 && ch >= 4).then_some(dots)
+}
+
+/// The square at a column and row of the grid as it is drawn.
+fn screen_square(col: u16, row: u16, flipped: bool) -> Square {
+    let (col, row) = (u32::from(col), u32::from(row));
+    let file = if flipped { 7 - col } else { col };
+    let rank = if flipped { row } else { 7 - row };
+    Square::from_coords(File::new(file), Rank::new(rank))
+}
+
+/// A canvas piece in the square at `(col, row)` of a grid of `cell`-sized
+/// squares, nudged by `offset` dots.
+fn canvas_piece(
+    piece: Piece,
+    (col, row): (u16, u16),
+    offset: (f64, f64),
+    cell: (u16, u16),
+) -> canvas::Piece {
+    let square = (cell.0 * canvas::DOTS.0, cell.1 * canvas::DOTS.1);
+    canvas::Piece {
+        role: piece.role,
+        colour: canvas_colour(piece.color),
+        at: (
+            f64::from(col * square.0) + offset.0,
+            f64::from(row * square.1) + offset.1,
+        ),
+        square,
+    }
+}
+
+/// The colour a side's canvas pieces are drawn in. Public so a test can
+/// read the pieces back out of a rendered buffer.
+pub fn canvas_colour(side: Side) -> Color {
+    match side {
+        Side::White => Color::Rgb(255, 255, 255),
+        Side::Black => Color::Rgb(20, 18, 16),
+    }
 }
 
 /// Draws the travelling piece over the board it was already drawn onto.
@@ -566,6 +637,30 @@ fn draw_board(f: &mut Frame, g: &Geometry, app: &App) {
 /// it can sit halfway between two squares.
 fn draw_slide(buf: &mut Buffer, g: &Geometry, app: &App, slide: &Slide, t: f32) {
     let (cw, ch) = g.cell;
+    // Ease in and out, so the piece does not start and stop abruptly.
+    let e = t * t * (3.0 - 2.0 * t);
+
+    if let Some(dots) = canvas_dots(app.piece_style, cw, ch) {
+        // Canvas pieces move a dot at a time, and may stop between dots.
+        let place = |sq: Square| {
+            let (file, rank) = (sq.file() as u16, sq.rank() as u16);
+            if app.flipped {
+                (7 - file, rank)
+            } else {
+                (file, 7 - rank)
+            }
+        };
+        let (from, to) = (place(slide.from), place(slide.to));
+        let square = (cw * canvas::DOTS.0, ch * canvas::DOTS.1);
+        let offset = (
+            f64::from(e) * (f64::from(to.0) - f64::from(from.0)) * f64::from(square.0),
+            f64::from(e) * (f64::from(to.1) - f64::from(from.1)) * f64::from(square.1),
+        );
+        let piece = canvas_piece(slide.piece, from, offset, g.cell);
+        canvas::stamp(buf, g.grid, &[piece], dots);
+        return;
+    }
+
     // Character styles have nothing to interpolate; they just arrive.
     let Some(sprite) = sprite_for(app.piece_style, cw, ch, slide.piece.role) else {
         return;
@@ -588,8 +683,6 @@ fn draw_slide(buf: &mut Buffer, g: &Geometry, app: &App, slide: &Slide, t: f32) 
     let (fx, fy) = origin(slide.from);
     let (tx, ty) = origin(slide.to);
 
-    // Ease in and out, so the piece does not start and stop abruptly.
-    let e = t * t * (3.0 - 2.0 * t);
     let lerp = |a: i32, b: i32| a + (((b - a) as f32) * e).round() as i32;
     let (x, y) = (lerp(fx, tx), lerp(fy, ty));
 
@@ -880,7 +973,11 @@ fn sprite_for(style: PieceStyle, cw: u16, ch: u16, role: Role) -> Option<Sprite>
         // 7x7 once outlined, so it needs the same room as the mid sprite.
         return (cw >= 9 && ch >= 4).then(|| font(role));
     }
-    if style != PieceStyle::Blocks {
+    // The canvas styles hand small squares over to the sprites.
+    if !matches!(
+        style,
+        PieceStyle::Blocks | PieceStyle::Octant | PieceStyle::Braille
+    ) {
         return None;
     }
     match (cw, ch) {
@@ -923,6 +1020,10 @@ fn piece_cell(
     style: PieceStyle,
     bg: Color,
 ) -> Vec<Span<'static>> {
+    // Canvas pieces are stamped over the board once it is drawn.
+    if canvas_dots(style, cw, ch).is_some() {
+        return vec![Span::styled(" ".repeat(cw.into()), Style::default().bg(bg))];
+    }
     let ink = ink(style, piece.color);
 
     if let Some(sprite) = sprite_for(style, cw, ch, piece.role) {
@@ -1215,6 +1316,25 @@ fn draw_promotion(f: &mut Frame, g: &Geometry, app: &App) {
         Paragraph::new(rows).alignment(Alignment::Left).block(block),
         g.promo,
     );
+
+    if let Some(dots) = canvas_dots(app.piece_style, g.promo_cell, inner_h) {
+        // Past the border and the one-cell margin the rows start with.
+        let area = Rect {
+            x: g.promo.x + 2,
+            y: g.promo.y + 1,
+            width: 4 * g.promo_cell,
+            height: inner_h,
+        };
+        let pieces: Vec<_> = PROMOTION_ROLES
+            .iter()
+            .enumerate()
+            .map(|(i, &role)| {
+                let piece = Piece { color: side, role };
+                canvas_piece(piece, (i as u16, 0), (0.0, 0.0), (g.promo_cell, inner_h))
+            })
+            .collect();
+        canvas::stamp(f.buffer_mut(), area, &pieces, dots);
+    }
 }
 
 fn centred(area: Rect, w: u16, h: u16) -> Rect {

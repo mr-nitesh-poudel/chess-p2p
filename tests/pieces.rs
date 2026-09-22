@@ -49,6 +49,13 @@ fn silhouette(app: &App, w: u16, h: u16, sq: Square, side: Color) -> Vec<String>
     rows
 }
 
+/// An app drawing half-block sprites, which braille would otherwise replace.
+fn sprites() -> App {
+    let mut app = App::local();
+    app.piece_style = PieceStyle::Blocks;
+    app
+}
+
 /// Every starting piece of `side`, by the square it sits on.
 fn all_roles(side: Color) -> [(Role, Square); 6] {
     let back = if side == Color::White { 0 } else { 7 };
@@ -69,7 +76,7 @@ fn all_roles(side: Color) -> [(Role, Square); 6] {
 #[test]
 fn every_piece_is_drawn_and_stands_on_its_square() {
     for (w, h) in [(100, 30), (120, 40)] {
-        let app = App::local();
+        let app = sprites();
         for (role, sq) in all_roles(Color::White) {
             let grid = silhouette(&app, w, h, sq, Color::White);
             let inked = grid
@@ -91,7 +98,7 @@ fn every_piece_is_drawn_and_stands_on_its_square() {
 #[test]
 fn the_six_pieces_are_told_apart() {
     for (w, h) in [(100, 30), (120, 40)] {
-        let app = App::local();
+        let app = sprites();
         let drawn: Vec<(Role, Vec<String>)> = all_roles(Color::White)
             .into_iter()
             .map(|(role, sq)| (role, silhouette(&app, w, h, sq, Color::White)))
@@ -107,7 +114,7 @@ fn the_six_pieces_are_told_apart() {
 
 #[test]
 fn both_sides_share_a_shape() {
-    let app = App::local();
+    let app = sprites();
     for ((role, white_sq), (_, black_sq)) in all_roles(Color::White)
         .into_iter()
         .zip(all_roles(Color::Black))
@@ -121,8 +128,7 @@ fn both_sides_share_a_shape() {
 #[test]
 fn small_squares_fall_back_instead_of_going_blank() {
     // 80x24 gives 5x2 squares, too small for a sprite.
-    let mut app = App::local();
-    app.piece_style = PieceStyle::Blocks;
+    let app = sprites();
     let grid = silhouette(&app, 80, 24, Square::E1, Color::White);
     assert!(
         grid.iter().all(|r| r.chars().all(|c| c == '.')),
