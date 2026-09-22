@@ -1,18 +1,36 @@
-//! What the two sides say before the game starts, one line at a time:
+//! What the two sides say before the game starts, one line at a time.
+//!
+//! The dialling side's first line picks one of two openings. Pairing by code:
 //!
 //! ```text
 //! joiner  pake <hex>        SPAKE2, keyed by the code
 //! host    pake <hex>
 //! joiner  confirm <hex>     proof we reached the same key
 //! host    confirm <hex>     ...or `no wrong-code`
+//! joiner  name <name>
+//! host    name <name>
 //! host    game chess 1      what the host is playing
-//! joiner  ok                ...or `no <why>`
+//! joiner  ok                ...or `no unsupported-game`
 //! ```
 //!
 //! SPAKE2 gives someone without the code exactly one guess per connection, and
 //! the host only allows a few wrong ones in total. The confirmations are keyed
 //! over both endpoint ids, which iroh has already authenticated, so a man in
 //! the middle relaying the exchange ends up with ids that do not match.
+//!
+//! Inviting a friend, whose endpoint id was learned by pairing once already.
+//! iroh proves who each side is, so there is no code; the host decides from
+//! its contacts whether to ask its player at all:
+//!
+//! ```text
+//! guest   invite
+//! guest   name <name>
+//! guest   game chess 1
+//! host    name <name>       once its player says yes
+//! host    ok                ...or `no declined`, `no busy`, `no unknown`...
+//! ```
+
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use iroh::EndpointId;
@@ -51,6 +69,19 @@ impl std::fmt::Display for Declined {
 
 impl std::error::Error for Declined {}
 
+/// The peer backed out with `no <reason>`, for a reason with no type of its
+/// own. The reason is one word, meant for turning into a message.
+#[derive(Debug)]
+pub struct Refused(pub String);
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "peer refused: {}", self.0)
+    }
+}
+
+impl std::error::Error for Refused {}
+
 #[derive(Clone, Copy)]
 #[repr(u8)]
 enum Role {
@@ -58,15 +89,19 @@ enum Role {
     Joiner = 1,
 }
 
-pub async fn host(
+/// The host's half of pairing by code, from just after the joiner's opening
+/// `pake` line. Returns the joiner's name.
+pub async fn host_code(
     send: &mut SendStream,
     lines: &mut Reader,
+    their_pake: &str,
     code: Code,
     game: Game,
+    name: &str,
     ids: (EndpointId, EndpointId),
-) -> Result<()> {
+) -> Result<String> {
     let (spake, ours) = start(code);
-    let theirs = unhex(&hear(lines, "pake").await?)?;
+    let theirs = unhex(their_pake)?;
     say(send, &format!("pake {}", hex(&ours))).await?;
     let key = finish(spake, &theirs)?;
 
@@ -81,19 +116,23 @@ pub async fn host(
     )
     .await?;
 
+    let their_name = hear(lines, "name").await?;
+    say(send, &format!("name {name}")).await?;
     say(send, &format!("game {} {}", game.name, game.version)).await?;
     hear(lines, "ok").await?;
-    Ok(())
+    Ok(their_name)
 }
 
-/// Returns whichever of `games` the host turned out to be playing.
-pub async fn join(
+/// The joiner's half of pairing by code. Returns whichever of `games` the host
+/// turned out to be playing, and the host's name.
+pub async fn join_code(
     send: &mut SendStream,
     lines: &mut Reader,
     code: Code,
     games: &[Game],
+    name: &str,
     ids: (EndpointId, EndpointId),
-) -> Result<Game> {
+) -> Result<(Game, String)> {
     let (spake, ours) = start(code);
     say(send, &format!("pake {}", hex(&ours))).await?;
     let theirs = unhex(&hear(lines, "pake").await?)?;
@@ -109,26 +148,58 @@ pub async fn join(
         return Err(WrongCode.into());
     }
 
+    say(send, &format!("name {name}")).await?;
+    let their_name = hear(lines, "name").await?;
+
     let offer = hear(lines, "game").await?;
-    let game = offer
-        .split_once(' ')
-        .and_then(|(name, version)| {
-            let version = version.parse().ok()?;
-            games
-                .iter()
-                .find(|g| g.name == name && g.version == version)
-        })
-        .copied();
-    match game {
+    match parse_game(&offer, games) {
         Some(game) => {
             say(send, "ok").await?;
-            Ok(game)
+            Ok((game, their_name))
         }
         None => {
             refuse(send, "unsupported-game").await;
             bail!("your opponent is playing {offer}, which this build does not have")
         }
     }
+}
+
+/// The guest's half of an invite. Returns the host's name once it says yes.
+pub async fn invite(
+    send: &mut SendStream,
+    lines: &mut Reader,
+    game: Game,
+    name: &str,
+) -> Result<String> {
+    say(send, "invite").await?;
+    say(send, &format!("name {name}")).await?;
+    say(send, &format!("game {} {}", game.name, game.version)).await?;
+    let their_name = hear(lines, "name").await?;
+    hear(lines, "ok").await?;
+    Ok(their_name)
+}
+
+/// The host's first look at an invite, just after its opening line: who says
+/// they are asking, and to play what.
+pub async fn read_invite(lines: &mut Reader, games: &[Game]) -> Result<(String, Option<Game>)> {
+    let name = hear(lines, "name").await?;
+    let offer = hear(lines, "game").await?;
+    Ok((name, parse_game(&offer, games)))
+}
+
+/// The host saying yes to an invite.
+pub async fn accept_invite(send: &mut SendStream, name: &str) -> Result<()> {
+    say(send, &format!("name {name}")).await?;
+    say(send, "ok").await
+}
+
+fn parse_game(offer: &str, games: &[Game]) -> Option<Game> {
+    let (name, version) = offer.split_once(' ')?;
+    let version: u32 = version.parse().ok()?;
+    games
+        .iter()
+        .find(|g| g.name == name && g.version == version)
+        .copied()
 }
 
 fn start(code: Code) -> (Spake2<Ed25519Group>, Vec<u8>) {
@@ -169,15 +240,15 @@ async fn say(send: &mut SendStream, line: &str) -> Result<()> {
 
 /// Back out with `no <why>`, and let that land before the caller drops the
 /// connection under it: closing a connection throws away unsent data.
-async fn refuse(send: &mut SendStream, why: &str) {
+pub async fn refuse(send: &mut SendStream, why: &str) {
     if say(send, &format!("no {why}")).await.is_ok() && send.finish().is_ok() {
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), send.stopped()).await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), send.stopped()).await;
     }
 }
 
 /// The next line, which has to be `verb`, returning whatever follows it. The
 /// peer backing out with `no <why>` comes back as the error.
-async fn hear(lines: &mut Reader, verb: &str) -> Result<String> {
+pub async fn hear(lines: &mut Reader, verb: &str) -> Result<String> {
     let line = lines
         .next_line()
         .await
@@ -188,7 +259,7 @@ async fn hear(lines: &mut Reader, verb: &str) -> Result<String> {
         w if w == verb => Ok(rest.to_string()),
         "no" if rest == "wrong-code" => Err(WrongCode.into()),
         "no" if rest == "unsupported-game" => Err(Declined.into()),
-        "no" => bail!("peer refused: {rest}"),
+        "no" => Err(Refused(rest.to_string()).into()),
         _ => bail!("expected {verb:?} from peer, got {word:?}"),
     }
 }

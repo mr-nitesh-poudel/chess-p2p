@@ -1,9 +1,11 @@
-//! The lobby: choosing from the menu, and typing a code in.
+//! The lobby: the menu, typing a code in, friends, and invites.
 
 use chess_p2p::app::{App, Conn};
-use chess_p2p::lobby::{Choice, Entry, ITEMS, Item, Lobby};
+use chess_p2p::lobby::{Choice, Entry, FRIENDS_SHOWN, Field, Item, Lobby, Row};
+use chess_p2p::profile::Contact;
 use chess_p2p::session::Code;
 use chess_p2p::ui::LobbyGeometry;
+use iroh::SecretKey;
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -21,8 +23,25 @@ fn code(s: &str) -> Code {
     s.parse().unwrap()
 }
 
-fn index(item: Item) -> usize {
-    ITEMS.iter().position(|&i| i == item).unwrap()
+fn index(lobby: &Lobby, item: Item) -> usize {
+    lobby
+        .rows()
+        .iter()
+        .position(|&r| r == Row::Item(item))
+        .unwrap()
+}
+
+fn friend(name: &str, last_played: u64) -> Contact {
+    Contact {
+        id: SecretKey::generate().public(),
+        name: name.into(),
+        games: 1,
+        last_played,
+    }
+}
+
+fn joining(lobby: &Lobby) -> bool {
+    lobby.editing == Some(Field::Code)
 }
 
 #[test]
@@ -40,7 +59,10 @@ fn the_menu_picks_what_is_selected() {
     key(&mut lobby, KeyCode::Up);
     assert_eq!(key(&mut lobby, KeyCode::Enter), Some(Choice::Quit));
 
-    assert_eq!(key(&mut Lobby::new(), KeyCode::Char('q')), Some(Choice::Quit));
+    assert_eq!(
+        key(&mut Lobby::new(), KeyCode::Char('q')),
+        Some(Choice::Quit)
+    );
 }
 
 #[test]
@@ -48,22 +70,22 @@ fn joining_opens_the_code_box_and_esc_backs_out() {
     let mut lobby = Lobby::new();
     key(&mut lobby, KeyCode::Down);
     assert_eq!(key(&mut lobby, KeyCode::Enter), None);
-    assert!(lobby.joining);
+    assert!(joining(&lobby));
 
     // In the box, q is part of a word, not a way out.
     assert_eq!(key(&mut lobby, KeyCode::Char('q')), None);
     assert_eq!(lobby.input, "q");
 
     key(&mut lobby, KeyCode::Esc);
-    assert!(!lobby.joining);
+    assert!(!joining(&lobby));
 }
 
 #[test]
 fn typing_a_number_from_the_menu_starts_a_code() {
     let mut lobby = Lobby::new();
     assert_eq!(typed(&mut lobby, "42 Tiger marble ocean"), None);
-    assert!(lobby.joining);
-    assert_eq!(lobby.selected, index(Item::Join));
+    assert!(joining(&lobby));
+    assert_eq!(lobby.selected, index(&lobby, Item::Join));
     assert_eq!(lobby.input, "42-tiger-marble-ocean");
     assert_eq!(
         key(&mut lobby, KeyCode::Enter),
@@ -76,7 +98,7 @@ fn enter_does_nothing_until_the_code_is_whole() {
     let mut lobby = Lobby::new();
     typed(&mut lobby, "42-tiger-marble");
     assert_eq!(key(&mut lobby, KeyCode::Enter), None);
-    assert!(lobby.joining);
+    assert!(joining(&lobby));
 }
 
 #[test]
@@ -136,7 +158,7 @@ fn pasting_takes_the_code_or_the_whole_command() {
     ] {
         let mut lobby = Lobby::new();
         lobby.on_paste(pasted);
-        assert!(lobby.joining, "{pasted:?}");
+        assert!(joining(&lobby), "{pasted:?}");
         assert_eq!(
             lobby.entry(),
             Entry::Ready(code("42-tiger-marble-ocean")),
@@ -148,31 +170,151 @@ fn pasting_takes_the_code_or_the_whole_command() {
 #[test]
 fn clicking_an_item_chooses_it() {
     let mut lobby = Lobby::new();
-    lobby.area = Rect::new(0, 0, 80, 24);
-    let g = LobbyGeometry::new(lobby.area);
-
-    let at = |i: usize| (g.items[i].x + 2, g.items[i].y);
+    lobby.set_friends(vec![friend("alice", 0)]);
+    lobby.area = Rect::new(0, 0, 80, 30);
+    let g = LobbyGeometry::new(lobby.area, &lobby.rows());
+    let row = |i: usize| g.rows[i];
+    let at = |i: usize| (row(i).x + 2, row(i).y);
     let mouse = |kind, (column, row)| MouseEvent {
         kind,
         column,
         row,
         modifiers: KeyModifiers::NONE,
     };
+    let (host, local) = (index(&lobby, Item::Host), index(&lobby, Item::Local));
 
     // Hovering selects, clicking chooses.
-    lobby.on_mouse(mouse(MouseEventKind::Moved, at(index(Item::Local))));
-    assert_eq!(lobby.selected, index(Item::Local));
+    lobby.on_mouse(mouse(MouseEventKind::Moved, at(local)));
+    assert_eq!(lobby.selected, local);
     let click = MouseEventKind::Down(MouseButton::Left);
-    assert_eq!(
-        lobby.on_mouse(mouse(click, at(index(Item::Host)))),
-        Some(Choice::Host)
-    );
+    assert_eq!(lobby.on_mouse(mouse(click, at(host))), Some(Choice::Host));
     // The blurb under an item is part of it.
-    let blurb = (g.items[index(Item::Local)].x, g.items[index(Item::Local)].y + 1);
+    let blurb = (row(local).x, row(local).y + 1);
     assert_eq!(lobby.on_mouse(mouse(click, blurb)), Some(Choice::Local));
 
+    let alice = lobby.friends[0].id;
+    let on_alice = lobby
+        .rows()
+        .iter()
+        .position(|&r| r == Row::Friend(0))
+        .unwrap();
+    assert_eq!(
+        lobby.on_mouse(mouse(click, at(on_alice))),
+        Some(Choice::Challenge(alice))
+    );
+
     assert_eq!(lobby.on_mouse(mouse(click, (g.input.x, g.input.y))), None);
-    assert!(lobby.joining);
+    assert!(joining(&lobby));
+}
+
+#[test]
+fn every_row_has_its_own_place_on_screen() {
+    let mut lobby = Lobby::new();
+    for friends in [0, 1, FRIENDS_SHOWN, FRIENDS_SHOWN + 3] {
+        lobby.set_friends((0..friends).map(|i| friend(&format!("f{i}"), 0)).collect());
+        let rows = lobby.rows();
+        let g = LobbyGeometry::new(Rect::new(0, 0, 80, 40), &rows);
+        assert_eq!(g.rows.len(), rows.len());
+        for pair in g.rows.windows(2) {
+            assert!(
+                pair[0].bottom() <= pair[1].y,
+                "rows overlap with {friends} friends"
+            );
+        }
+        assert!(g.rows.iter().all(|r| r.height > 0), "all fit at 80x40");
+        assert!(g.rows.last().unwrap().bottom() < g.input.y);
+    }
+}
+
+#[test]
+fn enter_on_a_friend_challenges_them_and_x_forgets() {
+    let mut lobby = Lobby::new();
+    lobby.set_friends(vec![friend("alice", 2), friend("bob", 1)]);
+    let (alice, bob) = (lobby.friends[0].id, lobby.friends[1].id);
+
+    // Host, Join, Local, then the friends.
+    for _ in 0..3 {
+        key(&mut lobby, KeyCode::Down);
+    }
+    assert_eq!(lobby.rows()[lobby.selected], Row::Friend(0));
+    assert_eq!(
+        key(&mut lobby, KeyCode::Enter),
+        Some(Choice::Challenge(alice))
+    );
+
+    key(&mut lobby, KeyCode::Down);
+    assert_eq!(key(&mut lobby, KeyCode::Char('x')), None);
+    assert_eq!(lobby.forgetting, Some(1));
+    // Anything but y keeps them.
+    assert_eq!(key(&mut lobby, KeyCode::Char('n')), None);
+    assert_eq!(lobby.forgetting, None);
+    key(&mut lobby, KeyCode::Char('x'));
+    assert_eq!(
+        key(&mut lobby, KeyCode::Char('y')),
+        Some(Choice::Forget(bob))
+    );
+
+    // x means nothing away from a friend.
+    let mut lobby = Lobby::new();
+    key(&mut lobby, KeyCode::Char('x'));
+    assert_eq!(lobby.forgetting, None);
+}
+
+#[test]
+fn the_selection_stays_put_when_friends_change() {
+    let mut lobby = Lobby::new();
+    lobby.set_friends(vec![friend("alice", 0)]);
+    lobby.selected = index(&lobby, Item::Name);
+    lobby.set_friends(vec![]);
+    assert_eq!(lobby.rows()[lobby.selected], Row::Item(Item::Name));
+
+    lobby.set_friends(vec![friend("alice", 0), friend("bob", 0)]);
+    lobby.selected = 4;
+    lobby.set_friends(vec![friend("alice", 0)]);
+    assert!(lobby.selected < lobby.rows().len());
+}
+
+#[test]
+fn renaming_edits_in_place() {
+    let mut lobby = Lobby::new();
+    lobby.name = "ace".into();
+    lobby.selected = index(&lobby, Item::Name);
+    assert_eq!(key(&mut lobby, KeyCode::Enter), None);
+    assert_eq!(lobby.editing, Some(Field::Name));
+    assert_eq!(lobby.name_input, "ace");
+
+    // Letters that mean something in the menu are just letters here.
+    typed(&mut lobby, " q jk");
+    assert_eq!(
+        key(&mut lobby, KeyCode::Enter),
+        Some(Choice::Rename("ace q jk".into()))
+    );
+    assert_eq!(lobby.editing, None);
+
+    // Esc keeps the old name.
+    lobby.selected = index(&lobby, Item::Name);
+    key(&mut lobby, KeyCode::Enter);
+    typed(&mut lobby, "zzz");
+    assert_eq!(key(&mut lobby, KeyCode::Esc), None);
+    assert_eq!(lobby.editing, None);
+}
+
+#[test]
+fn an_invite_is_answered_before_anything_else() {
+    let mut lobby = Lobby::new();
+    lobby.invite = Some("alice".into());
+    // Menu keys do nothing while it is up.
+    assert_eq!(key(&mut lobby, KeyCode::Char('q')), None);
+    assert_eq!(key(&mut lobby, KeyCode::Down), None);
+    assert_eq!(
+        key(&mut lobby, KeyCode::Char('y')),
+        Some(Choice::AcceptInvite)
+    );
+    assert_eq!(lobby.invite, None);
+
+    lobby.invite = Some("alice".into());
+    assert_eq!(key(&mut lobby, KeyCode::Esc), Some(Choice::DeclineInvite));
+    assert_eq!(lobby.invite, None);
 }
 
 #[test]

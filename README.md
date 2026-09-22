@@ -11,6 +11,12 @@ cargo run --release -- join 42-tiger-marble-ocean   # join one,
 cargo run --release -- local                        # or share a keyboard
 ```
 
+Anyone you have played turns up in the lobby under **friends**. Pick one to
+challenge them directly, with no code: their lobby asks them to accept.
+Leaving a game (`q`) brings you back to the lobby with your last opponent
+already selected, so a rematch is one keypress away. `x` forgets a friend, and
+**Your name** is what your friends see.
+
 The lobby lets you host, join or share a keyboard. Hosting puts your code
 on the clipboard straight away; `c` copies it again. To join, type the code
 or paste it. Pasting the whole `chess-p2p join ...` command works too. You can
@@ -43,7 +49,8 @@ Right-click puts a piece back down. Everything works from the keyboard too:
 | `c` | copy your share code, while you wait for an opponent |
 | `r` | resign (confirm with `y`) |
 | `d` | offer or accept a draw |
-| `q` / `esc` | quit |
+| `q` / `esc` | leave the game, back to the lobby |
+| `ctrl-c` | quit |
 
 Promotion opens a prompt: click a piece, or `←`/`→` then `enter`, or press
 `q` `r` `b` `n`.
@@ -115,7 +122,9 @@ select it, and press `m` again.
   what mouse clicks are tested against, so what you see and what you can click
   cannot drift apart.
 - **`app.rs`** — turns keypresses and network events into state changes.
-- **`lobby.rs`** — the first screen, and the code box with its completion.
+- **`lobby.rs`** — the first screen: the menu, the code box with its
+  completion, and friends.
+- **`profile.rs`** — your identity, name and friends, kept between runs.
 - **`clipboard.rs`** — OSC 52, plus the platform's clipboard tool.
 
 There is no referee. Both peers run the same rules over their own copy of the
@@ -144,7 +153,36 @@ about 40 bits: short enough to read out, too many to guess.
    and the joiner accepts it or backs out, so every game shares one pairing
    protocol.
 
-A code stops working an hour after it is published.
+A code stops working an hour after it is published, or as soon as the host
+leaves the game it was for.
+
+### Friends
+
+Every player keeps one secret key, so their endpoint id stays the same from
+run to run. Pairing by code is how two players first learn each other's ids;
+from then on each can dial the other by id alone, and iroh's discovery finds
+the rest. iroh authenticates both ends of every connection, so an invite
+needs no code: the host sees who is really dialling, and only asks its player
+about friends it already has. Anyone else, or anyone who calls while a game is
+on, is turned away with a reason the other side can show (`busy`, `unknown`,
+`declined`).
+
+One endpoint serves the whole run, and one listener answers everything that
+dials it. What it does depends on where the player is: in the lobby it passes
+friends' invites on, while hosting it pairs by code, and during a game it
+turns everyone away.
+
+The profile lives in `chess-p2p` under your config directory
+(`~/Library/Application Support` on macOS, `~/.config` on Linux), or in
+`$CHESS_P2P_HOME` if set:
+
+- `identity.key` — the secret key, readable only by you
+- `profile.json` — your name and friends
+- `identity.lock` — held while running
+
+A second copy started while the first holds the lock runs as a guest, with a
+throwaway key and nothing saved, rather than answering to the same id. To run
+two players on one machine, give the second its own `CHESS_P2P_HOME`.
 
 ## Tests
 
@@ -157,7 +195,10 @@ in one process to play moves between them. The pairing tests check that codes
 parse the way people retype them, that a wrong code is refused and the host
 gives up after three, and that a joiner backs out of a game it does not have.
 The lobby tests cover the menu, typing and pasting codes, Tab completion,
-flagging bad words as they are typed, and clicking items.
+flagging bad words as they are typed, clicking items, friends, renaming and
+answering invites. The invite tests cover accepting, refusing, a busy player,
+an unknown game and a withdrawn invite; the profile tests cover the identity
+surviving a restart, the lock, the key's permissions, and saving friends.
 
 `cargo test -- --ignored` also runs pairing over the real DHT, publishing a
 code and looking it up. It needs the internet and takes around ten seconds.

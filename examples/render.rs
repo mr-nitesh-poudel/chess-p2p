@@ -3,7 +3,8 @@
 
 use chess_p2p::app::{App, Conn};
 use chess_p2p::clipboard::Copied;
-use chess_p2p::lobby::Lobby;
+use chess_p2p::lobby::{Field, Lobby};
+use chess_p2p::profile::Contact;
 use chess_p2p::ui::{self, Geometry, PieceStyle};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -13,6 +14,15 @@ use shakmaty::{Color, Square};
 
 fn dump(label: &str, app: &App, w: u16, h: u16) {
     print_frame(label, w, h, |f| ui::draw(f, app));
+}
+
+fn friend(name: &str, games: u32, last_played: u64) -> Contact {
+    Contact {
+        id: iroh::SecretKey::generate().public(),
+        name: name.into(),
+        games,
+        last_played,
+    }
 }
 
 fn dump_lobby(label: &str, lobby: &Lobby, w: u16, h: u16) {
@@ -115,8 +125,26 @@ fn main() {
     dump("hosting, waiting", &hosting, 100, 30);
 
     let mut lobby = Lobby::new();
-    dump_lobby("lobby", &lobby, 80, 24);
-    lobby.joining = true;
+    lobby.name = "ace".into();
+    dump_lobby("lobby, first run", &lobby, 80, 30);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    lobby.set_friends(vec![
+        friend("alice", 3, now - 3 * 3600),
+        friend("bob", 1, now - 30 * 3600),
+        friend("a very long name indeed, really", 12, now - 20 * 86400),
+    ]);
+    lobby.selected = 3;
+    dump_lobby("lobby with friends", &lobby, 80, 30);
+    lobby.invite = Some("alice".into());
+    dump_lobby("an invite", &lobby, 80, 30);
+    lobby.invite = None;
+
+    lobby.set_friends(vec![]);
+    lobby.editing = Some(Field::Code);
     lobby.selected = 1;
     lobby.input = "42-tiger-mar".into();
     dump_lobby("lobby, typing a code", &lobby, 80, 24);

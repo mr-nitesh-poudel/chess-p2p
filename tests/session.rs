@@ -3,7 +3,10 @@
 use std::time::Duration;
 
 use chess_p2p::net::CHESS;
-use chess_p2p::session::{self, Code, CodeError, Game, Progress, Target, rendezvous};
+use chess_p2p::session::{
+    self, Code, CodeError, Game, Incoming, Listener, Progress, Target, rendezvous,
+};
+use iroh::SecretKey;
 
 #[test]
 fn generated_codes_round_trip() {
@@ -56,31 +59,23 @@ async fn joiner_declines_a_game_it_does_not_have() {
         name: "go",
         version: 1,
     };
-    let host = session::bind().await.unwrap();
+    let host = session::bind(SecretKey::generate()).await.unwrap();
     host.online().await;
-    let guest = session::bind().await.unwrap();
+    let (tx, mut heard) = tokio::sync::mpsc::unbounded_channel();
+    let listener = Listener::start(host.clone(), &[go], tx);
+    listener.host(code, go, "alice", false);
 
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    let hosting = tokio::spawn({
-        let host = host.clone();
-        async move {
-            session::host(&host, code, go, false, move |p| {
-                let _ = tx.send(p);
-            })
-            .await
-        }
-    });
-
-    let joined = session::join(&guest, code, &[CHESS], Target::Addr(host.addr()), |_| {}).await;
-    let why = format!("{:#}", joined.err().expect("joiner should back out"));
+    let guest = session::bind(SecretKey::generate()).await.unwrap();
+    let at = Target::Addr(host.addr());
+    let joined = session::join(&guest, code, &[CHESS], at, "bob", |_| {}).await;
+    let why = format!("{:#}", joined.expect_err("joiner should back out"));
     assert!(why.contains("go 1"), "{why}");
 
-    let seen = tokio::time::timeout(Duration::from_secs(30), rx.recv()).await;
-    assert_eq!(seen.unwrap(), Some(Progress::Declined));
-
-    hosting.abort();
-    guest.close().await;
-    host.close().await;
+    let seen = tokio::time::timeout(Duration::from_secs(30), heard.recv()).await;
+    assert!(matches!(
+        seen.unwrap(),
+        Some(Incoming::Progress(Progress::Declined))
+    ));
 }
 
 /// Publishes to and resolves from the real Mainline DHT, so it needs the
@@ -89,7 +84,7 @@ async fn joiner_declines_a_game_it_does_not_have() {
 #[ignore]
 async fn code_round_trips_through_the_dht() {
     let code = Code::generate();
-    let host = session::bind().await.unwrap();
+    let host = session::bind(SecretKey::generate()).await.unwrap();
     host.online().await;
 
     rendezvous::publish(code, &host.addr()).await.unwrap();

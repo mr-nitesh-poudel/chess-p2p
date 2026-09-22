@@ -10,7 +10,7 @@ use shakmaty::{Color as Side, File, Piece, Rank, Role, Square};
 use crate::app::{App, Conn, Slide};
 use crate::clipboard::Copied;
 use crate::game::PROMOTION_ROLES;
-use crate::lobby::{Entry, ITEMS, Lobby};
+use crate::lobby::{Entry, Field, Item, Lobby, Row};
 
 const LIGHT: Color = Color::Rgb(214, 194, 162);
 const DARK: Color = Color::Rgb(137, 99, 73);
@@ -154,27 +154,66 @@ impl Geometry {
     }
 }
 
-/// Where the lobby's pieces sit: a label and a blurb row per item, then the
-/// code box.
+/// Where the lobby's pieces sit. [`LobbyGeometry::rows`] lines up with
+/// [`Lobby::rows`], so what is drawn and what is clicked cannot drift apart.
 pub struct LobbyGeometry {
     pub panel: Rect,
-    pub items: [Rect; ITEMS.len()],
+    pub rows: Vec<Rect>,
+    pub friends_heading: Rect,
+    /// Where to say how friends get here, while there are none.
+    pub no_friends: Option<Rect>,
     pub input: Rect,
     pub hint: Rect,
     pub footer: Rect,
 }
 
 const LOBBY_W: u16 = 46;
-/// A blank row, two per item, a blank, the code, its hint, and a blank.
-const LOBBY_INNER_H: u16 = 1 + 2 * ITEMS.len() as u16 + 4;
 const PROMPT: &str = "code ";
 
+/// A label and a blurb for most items; a single line for Quit and a friend.
+fn row_height(row: Row) -> u16 {
+    match row {
+        Row::Friend(_) | Row::Item(Item::Quit) => 1,
+        Row::Item(_) => 2,
+    }
+}
+
 impl LobbyGeometry {
-    pub fn new(area: Rect) -> Self {
+    pub fn new(area: Rect, rows: &[Row]) -> Self {
+        // Top to bottom inside the panel first, then placed on screen once
+        // the panel's height is known.
+        let has_friends = rows.iter().any(|r| matches!(r, Row::Friend(_)));
+        let mut y = 1;
+        let mut heading = 0;
+        let mut no_friends = None;
+        let mut placed = Vec::with_capacity(rows.len());
+        for (i, &row) in rows.iter().enumerate() {
+            let starts_friends = match row {
+                Row::Friend(_) => i == 0 || !matches!(rows[i - 1], Row::Friend(_)),
+                Row::Item(Item::Name) => !has_friends,
+                _ => false,
+            };
+            if starts_friends {
+                heading = y + 1;
+                y += 2;
+                if !has_friends {
+                    no_friends = Some(y);
+                    y += 1;
+                }
+            }
+            if row == Row::Item(Item::Name) {
+                y += 1;
+            }
+            placed.push((y, row_height(row)));
+            y += row_height(row);
+        }
+        let (input, hint) = (y + 1, y + 2);
+        let inner_h = y + 4;
+
         let [main, footer] =
             Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
-        let panel = centred(main, LOBBY_W, LOBBY_INNER_H + 2);
-        let row = |y: u16, h: u16| {
+        let panel = centred(main, LOBBY_W, inner_h + 2);
+        let at = |y: u16, h: u16| {
             Rect {
                 x: panel.x + 2,
                 y: panel.y + 1 + y,
@@ -185,23 +224,24 @@ impl LobbyGeometry {
         };
         Self {
             panel,
-            items: std::array::from_fn(|i| row(1 + 2 * i as u16, 2)),
-            input: row(2 + 2 * ITEMS.len() as u16, 1),
-            hint: row(3 + 2 * ITEMS.len() as u16, 1),
+            rows: placed.into_iter().map(|(y, h)| at(y, h)).collect(),
+            friends_heading: at(heading, 1),
+            no_friends: no_friends.map(|y| at(y, 1)),
+            input: at(input, 1),
+            hint: at(hint, 1),
             footer,
         }
     }
 
-    /// The menu item under a screen position, if any.
-    pub fn item_at(&self, x: u16, y: u16) -> Option<usize> {
-        self.items
-            .iter()
-            .position(|r| r.contains(Position { x, y }))
+    /// The row under a screen position, if any.
+    pub fn row_at(&self, x: u16, y: u16) -> Option<usize> {
+        self.rows.iter().position(|r| r.contains(Position { x, y }))
     }
 }
 
 pub fn draw_lobby(f: &mut Frame, lobby: &Lobby) {
-    let g = LobbyGeometry::new(f.area());
+    let rows = lobby.rows();
+    let g = LobbyGeometry::new(f.area(), &rows);
     let muted = Style::default().fg(MUTED);
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
@@ -209,7 +249,18 @@ pub fn draw_lobby(f: &mut Frame, lobby: &Lobby) {
         .title(Line::from(" chess-p2p ").centered());
     f.render_widget(block, g.panel);
 
-    for (i, (item, area)) in ITEMS.iter().zip(g.items).enumerate() {
+    f.render_widget(
+        Paragraph::new(Line::styled("friends", muted)),
+        g.friends_heading,
+    );
+    if let Some(area) = g.no_friends {
+        f.render_widget(
+            Paragraph::new(Line::styled("  anyone you play turns up here", muted)),
+            area,
+        );
+    }
+
+    for (i, (&row, &area)) in rows.iter().zip(&g.rows).enumerate() {
         let (mark, label) = if i == lobby.selected {
             (
                 "▸ ",
@@ -218,23 +269,59 @@ pub fn draw_lobby(f: &mut Frame, lobby: &Lobby) {
         } else {
             ("  ", Style::default())
         };
-        let lines = vec![
-            Line::from(vec![
-                Span::styled(mark, label),
-                Span::styled(item.label(), label),
-            ]),
-            Line::styled(format!("  {}", item.blurb()), muted),
-        ];
+        let lines = match row {
+            Row::Friend(n) => {
+                let friend = &lobby.friends[n];
+                let games = match friend.games {
+                    1 => "1 game".to_string(),
+                    n => format!("{n} games"),
+                };
+                let name: String = friend.name.chars().take(18).collect();
+                vec![Line::from(vec![
+                    Span::styled(mark, label),
+                    Span::styled(format!("{name:<19}"), label),
+                    Span::styled(format!("{games} · {}", ago(friend.last_played)), muted),
+                ])]
+            }
+            Row::Item(item) => {
+                let mut lines = vec![Line::from(vec![
+                    Span::styled(mark, label),
+                    Span::styled(item.label(), label),
+                ])];
+                let blurb = match item {
+                    Item::Host => Line::styled("  get a code to send your opponent", muted),
+                    Item::Join => Line::styled("  type in the code your opponent sent", muted),
+                    Item::Local => Line::styled("  two players taking turns", muted),
+                    Item::Name if lobby.editing == Some(Field::Name) => Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(lobby.name_input.as_str(), Style::default().fg(CURSOR)),
+                    ]),
+                    Item::Name if lobby.guest => Line::styled(
+                        format!("  {} (guest: another copy has your profile)", lobby.name),
+                        muted,
+                    ),
+                    Item::Name => Line::from(vec![
+                        Span::raw("  "),
+                        Span::raw(lobby.name.as_str()),
+                        Span::styled(" — what friends see", muted),
+                    ]),
+                    Item::Quit => Line::raw(""),
+                };
+                lines.push(blurb);
+                lines
+            }
+        };
         f.render_widget(Paragraph::new(lines), area);
     }
 
-    let input = if lobby.input.is_empty() && !lobby.joining {
+    let joining = lobby.editing == Some(Field::Code);
+    let input = if lobby.input.is_empty() && !joining {
         Line::from(vec![
             Span::styled(PROMPT, muted),
             Span::styled("42-tiger-marble-ocean", muted),
         ])
     } else {
-        let typed = if lobby.joining {
+        let typed = if joining {
             Style::default().fg(CURSOR)
         } else {
             Style::default()
@@ -251,28 +338,55 @@ pub fn draw_lobby(f: &mut Frame, lobby: &Lobby) {
         ])
     };
     f.render_widget(Paragraph::new(input), g.input);
-    if lobby.joining {
-        let x = g.input.x + (PROMPT.len() + lobby.input.len()) as u16;
-        f.set_cursor_position(Position {
-            x: x.min(g.input.right().saturating_sub(1)),
-            y: g.input.y,
-        });
+
+    match lobby.editing {
+        Some(Field::Code) => set_cursor(f, g.input, PROMPT.len() + lobby.input.len()),
+        Some(Field::Name) => {
+            let blurb = g.rows[lobby.selected];
+            let line = Rect {
+                y: blurb.y + 1,
+                height: 1,
+                ..blurb
+            };
+            set_cursor(f, line, 2 + lobby.name_input.chars().count());
+        }
+        None => {}
     }
 
-    let hint = match lobby.entry() {
-        _ if !lobby.joining => Line::raw(""),
-        Entry::Empty => Line::styled("type or paste the code you were sent", muted),
-        Entry::Typing if lobby.completion().is_some() => {
-            Line::styled("tab finishes the word", muted)
+    let hint = if let Some(i) = lobby.forgetting {
+        let name = lobby.friends.get(i).map_or("them", |f| f.name.as_str());
+        Line::styled(
+            format!("forget {name}? y to confirm"),
+            Style::default().fg(CAPTURE),
+        )
+    } else if lobby.editing == Some(Field::Name) {
+        Line::styled("enter saves, esc cancels", muted)
+    } else if joining {
+        match lobby.entry() {
+            Entry::Empty => Line::styled("type or paste the code you were sent", muted),
+            Entry::Typing if lobby.completion().is_some() => {
+                Line::styled("tab finishes the word", muted)
+            }
+            Entry::Typing => Line::raw(""),
+            Entry::Ready(_) => Line::styled("enter to join", Style::default().fg(SELECTED)),
+            Entry::Bad(why) => Line::styled(why, Style::default().fg(CAPTURE)),
         }
-        Entry::Typing => Line::raw(""),
-        Entry::Ready(_) => Line::styled("enter to join", Style::default().fg(SELECTED)),
-        Entry::Bad(why) => Line::styled(why, Style::default().fg(CAPTURE)),
+    } else if let Some(notice) = &lobby.notice {
+        Line::styled(notice.as_str(), Style::default().fg(CURSOR))
+    } else {
+        Line::raw("")
     };
     f.render_widget(Paragraph::new(hint), g.hint);
 
-    let keys = if lobby.joining {
+    let on_friend = matches!(rows.get(lobby.selected), Some(Row::Friend(_)));
+    let keys = if lobby.invite.is_some() {
+        "y accept   n decline"
+    } else if joining {
         "enter join   tab complete   ctrl-u clear   esc back"
+    } else if lobby.editing == Some(Field::Name) {
+        "enter save   esc cancel"
+    } else if on_friend {
+        "enter challenge   x forget   ↑/↓ choose   q quit"
     } else {
         "↑/↓ choose   enter select   or type a code   q quit"
     };
@@ -280,6 +394,52 @@ pub fn draw_lobby(f: &mut Frame, lobby: &Lobby) {
         Paragraph::new(Line::styled(keys, muted)).centered(),
         g.footer,
     );
+
+    if let Some(name) = &lobby.invite {
+        let area = centred(g.panel, 40, 5);
+        f.render_widget(Clear, area);
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(CURSOR))
+            .title(Line::from(" invite ").centered());
+        let lines = vec![
+            Line::raw(""),
+            Line::styled(
+                format!("{name} wants to play chess"),
+                Style::default().add_modifier(Modifier::BOLD),
+            )
+            .centered(),
+            Line::styled("y accept   n decline", muted).centered(),
+        ];
+        f.render_widget(Paragraph::new(lines).block(block), area);
+    }
+}
+
+fn set_cursor(f: &mut Frame, line: Rect, offset: usize) {
+    let x = line.x + offset as u16;
+    f.set_cursor_position(Position {
+        x: x.min(line.right().saturating_sub(1)),
+        y: line.y,
+    });
+}
+
+/// How long ago a Unix time was, in the loosest terms that still help.
+fn ago(then: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let s = now.saturating_sub(then);
+    const HOUR: u64 = 60 * 60;
+    const DAY: u64 = 24 * HOUR;
+    const TWO_DAYS: u64 = 2 * DAY;
+    match s {
+        0..60 => "just now".into(),
+        60..HOUR => format!("{}m ago", s / 60),
+        HOUR..DAY => format!("{}h ago", s / HOUR),
+        DAY..TWO_DAYS => "yesterday".into(),
+        _ if s < 14 * DAY => format!("{}d ago", s / DAY),
+        _ => format!("{}w ago", s / (7 * DAY)),
+    }
 }
 
 fn block_w(cell_w: u16) -> u16 {
@@ -948,9 +1108,13 @@ fn draw_sidebar(f: &mut Frame, area: Rect, app: &App) {
         }
         Conn::LookingUp => lines.push(Line::styled("looking up code…", Style::default().fg(MUTED))),
         Conn::Dialling => lines.push(Line::styled("connecting…", Style::default().fg(MUTED))),
+        Conn::Inviting(name) => lines.push(Line::styled(
+            format!("waiting for {name} to accept…"),
+            Style::default().fg(MUTED),
+        )),
         Conn::Playing => lines.push(Line::from(vec![
             Span::styled("peer ", Style::default().fg(MUTED)),
-            Span::raw(app.peer_short()),
+            Span::raw(app.peer_label()),
         ])),
         Conn::Lost(why) => lines.push(Line::styled(why.clone(), Style::default().fg(CAPTURE))),
     }
@@ -1004,11 +1168,11 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     } else if app.confirm_resign {
         "y confirm resign   n cancel"
     } else if area.width >= 92 {
-        "click or drag to move   arrows/hjkl   f flip   p pieces   m mouse   r resign   d draw   q quit"
+        "click or drag to move   arrows/hjkl   f flip   p pieces   m mouse   r resign   d draw   q lobby"
     } else if area.width >= 62 {
-        "click or drag   f flip   p pieces   r resign   d draw   q quit"
+        "click or drag   f flip   p pieces   r resign   d draw   q lobby"
     } else {
-        "click to move   f flip   r resign   q quit"
+        "click to move   f flip   r resign   q lobby"
     };
     f.render_widget(
         Paragraph::new(Line::styled(format!(" {keys}"), Style::default().fg(MUTED))),

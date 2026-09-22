@@ -5,5 +5,6 @@ pub mod clipboard;
 pub mod game;
 pub mod lobby;
 pub mod net;
+pub mod profile;
 pub mod session;
 pub mod ui;

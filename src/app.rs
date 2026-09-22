@@ -38,6 +38,8 @@ pub enum Conn {
     LookingUp,
     /// Joining, found the host and pairing with it.
     Dialling,
+    /// Waiting for this friend to answer our invite.
+    Inviting(String),
     Playing,
     Lost(String),
 }
@@ -48,6 +50,8 @@ pub struct App {
     pub me: Option<Color>,
     pub net: Option<Net>,
     pub peer: Option<EndpointId>,
+    /// What the peer calls itself.
+    pub peer_name: Option<String>,
     pub share: Option<String>,
     /// Text waiting for the main loop to put on the clipboard.
     pub copy_request: Option<String>,
@@ -65,7 +69,10 @@ pub struct App {
     pub slide: Option<Slide>,
     /// Overrides the animation clock, so a test can render an exact frame.
     pub clock: Option<Instant>,
+    /// Done with this game: back to the lobby.
     pub quit: bool,
+    /// Done with the program altogether.
+    pub exit: bool,
     pub confirm_resign: bool,
     /// The peer has offered a draw and we have not answered.
     pub draw_offered: bool,
@@ -82,6 +89,7 @@ impl App {
             me: None,
             net: None,
             peer: None,
+            peer_name: None,
             share: None,
             copy_request: None,
             copied: None,
@@ -94,6 +102,7 @@ impl App {
             slide: None,
             clock: None,
             quit: false,
+            exit: false,
             confirm_resign: false,
             draw_offered: false,
             draw_sent: false,
@@ -102,16 +111,25 @@ impl App {
         }
     }
 
-    pub fn networked(net: Net, me: Color, conn: Conn, code: Code) -> Self {
+    /// A game against someone who is not connected yet. `code` is what to
+    /// show for them to join with, when hosting.
+    pub fn networked(me: Color, conn: Conn, code: Option<Code>) -> Self {
         Self {
             me: Some(me),
             // Always sit behind your own pieces.
             flipped: me == Color::Black,
-            share: Some(code.to_string()),
-            net: Some(net),
+            share: code.map(|c| c.to_string()),
             conn,
             ..Self::local()
         }
+    }
+
+    /// The opponent is in.
+    pub fn attach(&mut self, net: Net, name: &str) {
+        self.peer = Some(net.peer);
+        self.peer_name = Some(name.to_string());
+        self.net = Some(net);
+        self.conn = Conn::Playing;
     }
 
     /// Ask for the share code to go on the clipboard, while it is still of use.
@@ -121,7 +139,11 @@ impl App {
         }
     }
 
-    pub fn peer_short(&self) -> String {
+    /// How to refer to the opponent: their name, else a short id.
+    pub fn peer_label(&self) -> String {
+        if let Some(name) = &self.peer_name {
+            return name.clone();
+        }
         self.peer
             .map(|p| p.fmt_short().to_string())
             .unwrap_or_else(|| "—".into())
@@ -254,7 +276,7 @@ impl App {
         }
 
         match key.code {
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => self.quit = true,
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => self.exit = true,
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Esc => {
                 if self.game.selected.is_some() {
@@ -347,10 +369,6 @@ impl App {
             }
             NetEvent::Progress(Progress::Declined) => {
                 self.note = Some("someone joined who cannot play chess".into());
-            }
-            NetEvent::Connected(peer) => {
-                self.peer = Some(peer);
-                self.conn = Conn::Playing;
             }
             NetEvent::Move(uci) => match self.game.play_uci(&uci) {
                 // Playing on silently declines any outstanding draw offer.
