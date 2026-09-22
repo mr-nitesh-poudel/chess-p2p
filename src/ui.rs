@@ -8,7 +8,9 @@ use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Wrap};
 use shakmaty::{Color as Side, File, Piece, Rank, Role, Square};
 
 use crate::app::{App, Conn, Slide};
+use crate::clipboard::Copied;
 use crate::game::PROMOTION_ROLES;
+use crate::lobby::{Entry, ITEMS, Lobby};
 
 const LIGHT: Color = Color::Rgb(214, 194, 162);
 const DARK: Color = Color::Rgb(137, 99, 73);
@@ -150,6 +152,134 @@ impl Geometry {
         let index = (x.checked_sub(self.promo.x + 1)? / self.promo_cell) as usize;
         (index < PROMOTION_ROLES.len()).then_some(index)
     }
+}
+
+/// Where the lobby's pieces sit: a label and a blurb row per item, then the
+/// code box.
+pub struct LobbyGeometry {
+    pub panel: Rect,
+    pub items: [Rect; ITEMS.len()],
+    pub input: Rect,
+    pub hint: Rect,
+    pub footer: Rect,
+}
+
+const LOBBY_W: u16 = 46;
+/// A blank row, two per item, a blank, the code, its hint, and a blank.
+const LOBBY_INNER_H: u16 = 1 + 2 * ITEMS.len() as u16 + 4;
+const PROMPT: &str = "code ";
+
+impl LobbyGeometry {
+    pub fn new(area: Rect) -> Self {
+        let [main, footer] =
+            Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
+        let panel = centred(main, LOBBY_W, LOBBY_INNER_H + 2);
+        let row = |y: u16, h: u16| {
+            Rect {
+                x: panel.x + 2,
+                y: panel.y + 1 + y,
+                width: panel.width.saturating_sub(4),
+                height: h,
+            }
+            .intersection(panel)
+        };
+        Self {
+            panel,
+            items: std::array::from_fn(|i| row(1 + 2 * i as u16, 2)),
+            input: row(2 + 2 * ITEMS.len() as u16, 1),
+            hint: row(3 + 2 * ITEMS.len() as u16, 1),
+            footer,
+        }
+    }
+
+    /// The menu item under a screen position, if any.
+    pub fn item_at(&self, x: u16, y: u16) -> Option<usize> {
+        self.items
+            .iter()
+            .position(|r| r.contains(Position { x, y }))
+    }
+}
+
+pub fn draw_lobby(f: &mut Frame, lobby: &Lobby) {
+    let g = LobbyGeometry::new(f.area());
+    let muted = Style::default().fg(MUTED);
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(muted)
+        .title(Line::from(" chess-p2p ").centered());
+    f.render_widget(block, g.panel);
+
+    for (i, (item, area)) in ITEMS.iter().zip(g.items).enumerate() {
+        let (mark, label) = if i == lobby.selected {
+            (
+                "▸ ",
+                Style::default().fg(CURSOR).add_modifier(Modifier::BOLD),
+            )
+        } else {
+            ("  ", Style::default())
+        };
+        let lines = vec![
+            Line::from(vec![
+                Span::styled(mark, label),
+                Span::styled(item.label(), label),
+            ]),
+            Line::styled(format!("  {}", item.blurb()), muted),
+        ];
+        f.render_widget(Paragraph::new(lines), area);
+    }
+
+    let input = if lobby.input.is_empty() && !lobby.joining {
+        Line::from(vec![
+            Span::styled(PROMPT, muted),
+            Span::styled("42-tiger-marble-ocean", muted),
+        ])
+    } else {
+        let typed = if lobby.joining {
+            Style::default().fg(CURSOR)
+        } else {
+            Style::default()
+        };
+        // The rest of the word Tab would fill in, greyed out after the cursor.
+        let ghost = lobby.completion().map_or("", |word| {
+            let typed = lobby.input.rsplit('-').next().map_or(0, str::len);
+            &word[typed..]
+        });
+        Line::from(vec![
+            Span::styled(PROMPT, muted),
+            Span::styled(lobby.input.as_str(), typed),
+            Span::styled(ghost, muted),
+        ])
+    };
+    f.render_widget(Paragraph::new(input), g.input);
+    if lobby.joining {
+        let x = g.input.x + (PROMPT.len() + lobby.input.len()) as u16;
+        f.set_cursor_position(Position {
+            x: x.min(g.input.right().saturating_sub(1)),
+            y: g.input.y,
+        });
+    }
+
+    let hint = match lobby.entry() {
+        _ if !lobby.joining => Line::raw(""),
+        Entry::Empty => Line::styled("type or paste the code you were sent", muted),
+        Entry::Typing if lobby.completion().is_some() => {
+            Line::styled("tab finishes the word", muted)
+        }
+        Entry::Typing => Line::raw(""),
+        Entry::Ready(_) => Line::styled("enter to join", Style::default().fg(SELECTED)),
+        Entry::Bad(why) => Line::styled(why, Style::default().fg(CAPTURE)),
+    };
+    f.render_widget(Paragraph::new(hint), g.hint);
+
+    let keys = if lobby.joining {
+        "enter join   tab complete   ctrl-u clear   esc back"
+    } else {
+        "↑/↓ choose   enter select   or type a code   q quit"
+    };
+    f.render_widget(
+        Paragraph::new(Line::styled(keys, muted)).centered(),
+        g.footer,
+    );
 }
 
 fn block_w(cell_w: u16) -> u16 {
@@ -757,7 +887,8 @@ fn draw_tray(f: &mut Frame, area: Rect, app: &App, side: Side) {
 }
 
 fn draw_sidebar(f: &mut Frame, area: Rect, app: &App) {
-    let [status, moves] = Layout::vertical([Constraint::Length(8), Constraint::Min(3)]).areas(area);
+    let [status, moves] =
+        Layout::vertical([Constraint::Length(12), Constraint::Min(3)]).areas(area);
 
     let mut lines = Vec::new();
     match app.me {
@@ -785,19 +916,37 @@ fn draw_sidebar(f: &mut Frame, area: Rect, app: &App) {
     lines.push(Line::raw(""));
     match &app.conn {
         Conn::Local => {}
-        Conn::Waiting => {
+        Conn::Publishing | Conn::Waiting => {
             lines.push(Line::styled("share this code:", Style::default().fg(MUTED)));
             lines.push(Line::styled(
                 app.share.clone().unwrap_or_default(),
                 Style::default().fg(CURSOR),
             ));
-            if app.mouse {
-                lines.push(Line::styled(
-                    "(m frees the mouse to copy)",
-                    Style::default().fg(MUTED),
-                ));
+            match app.copied {
+                Some(Copied::Clipboard) => {
+                    lines.push(Line::styled("copied ✓", Style::default().fg(SELECTED)));
+                }
+                // Nothing reports back whether the terminal did it, so say
+                // what to do if it did not.
+                Some(Copied::Terminal) => {
+                    lines.push(Line::styled(
+                        "copied via the terminal",
+                        Style::default().fg(SELECTED),
+                    ));
+                    if app.mouse {
+                        lines.push(Line::styled(
+                            "(no? m, then select it)",
+                            Style::default().fg(MUTED),
+                        ));
+                    }
+                }
+                None => lines.push(Line::styled("c copies it", Style::default().fg(MUTED))),
+            }
+            if matches!(app.conn, Conn::Publishing) {
+                lines.push(Line::styled("publishing it…", Style::default().fg(MUTED)));
             }
         }
+        Conn::LookingUp => lines.push(Line::styled("looking up code…", Style::default().fg(MUTED))),
         Conn::Dialling => lines.push(Line::styled("connecting…", Style::default().fg(MUTED))),
         Conn::Playing => lines.push(Line::from(vec![
             Span::styled("peer ", Style::default().fg(MUTED)),

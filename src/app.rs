@@ -10,8 +10,10 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color as Paint, Modifier, Style};
 use shakmaty::{Color, Move, Piece, Position, Role, Square};
 
+use crate::clipboard::Copied;
 use crate::game::{Game, PROMOTION_ROLES, ui_to};
 use crate::net::{Net, NetEvent, Out};
+use crate::session::{Code, MAX_WRONG_CODES, Progress};
 use crate::ui::{Geometry, PieceStyle};
 
 /// How long a piece takes to travel between two squares.
@@ -28,8 +30,13 @@ pub struct Slide {
 pub enum Conn {
     /// Hot-seat: no network at all.
     Local,
-    /// Hosting, waiting for someone to dial in.
+    /// Hosting, putting the code on the DHT.
+    Publishing,
+    /// Hosting, with the code published and nobody in yet.
     Waiting,
+    /// Joining, finding the host behind the code.
+    LookingUp,
+    /// Joining, found the host and pairing with it.
     Dialling,
     Playing,
     Lost(String),
@@ -42,6 +49,10 @@ pub struct App {
     pub net: Option<Net>,
     pub peer: Option<EndpointId>,
     pub share: Option<String>,
+    /// Text waiting for the main loop to put on the clipboard.
+    pub copy_request: Option<String>,
+    /// How the last copy of the share code went.
+    pub copied: Option<Copied>,
     pub conn: Conn,
     pub flipped: bool,
     pub piece_style: PieceStyle,
@@ -72,6 +83,8 @@ impl App {
             net: None,
             peer: None,
             share: None,
+            copy_request: None,
+            copied: None,
             conn: Conn::Local,
             flipped: false,
             piece_style: PieceStyle::Blocks,
@@ -89,16 +102,22 @@ impl App {
         }
     }
 
-    pub fn networked(net: Net, me: Color, conn: Conn) -> Self {
-        let share = net.id.to_string();
+    pub fn networked(net: Net, me: Color, conn: Conn, code: Code) -> Self {
         Self {
             me: Some(me),
             // Always sit behind your own pieces.
             flipped: me == Color::Black,
-            share: Some(share),
+            share: Some(code.to_string()),
             net: Some(net),
             conn,
             ..Self::local()
+        }
+    }
+
+    /// Ask for the share code to go on the clipboard, while it is still of use.
+    pub fn copy_share(&mut self) {
+        if matches!(self.conn, Conn::Publishing | Conn::Waiting) {
+            self.copy_request = self.share.clone();
         }
     }
 
@@ -247,6 +266,7 @@ impl App {
             KeyCode::Char('f') => self.flipped = !self.flipped,
             KeyCode::Char('p') => self.piece_style = self.piece_style.next(),
             KeyCode::Char('m') => self.mouse = !self.mouse,
+            KeyCode::Char('c') => self.copy_share(),
             KeyCode::Char('r') if !self.game.over() => self.confirm_resign = true,
             KeyCode::Char('d') if !self.game.over() => self.draw_key(),
             KeyCode::Left | KeyCode::Char('h') => self.nudge(-1, 0),
@@ -318,7 +338,16 @@ impl App {
 
     pub fn on_net(&mut self, event: NetEvent) {
         match event {
-            NetEvent::Online => {}
+            NetEvent::Progress(Progress::Listed) => self.conn = Conn::Waiting,
+            NetEvent::Progress(Progress::Found) => self.conn = Conn::Dialling,
+            NetEvent::Progress(Progress::WrongCode { attempts }) => {
+                self.note = Some(format!(
+                    "someone tried a wrong code ({attempts} of {MAX_WRONG_CODES})"
+                ));
+            }
+            NetEvent::Progress(Progress::Declined) => {
+                self.note = Some("someone joined who cannot play chess".into());
+            }
             NetEvent::Connected(peer) => {
                 self.peer = Some(peer);
                 self.conn = Conn::Playing;

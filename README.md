@@ -1,14 +1,30 @@
 # chess-p2p
 
 Terminal chess for two people, played over a direct peer-to-peer connection.
-No server to run, no account, no port forwarding — one of you shares a code,
-the other pastes it in.
+No server to run, no account, no port forwarding — one of you reads out a
+short code, the other types it in.
 
 ```
-cargo run --release -- host          # prints a code, waits
-cargo run --release -- join <code>   # your opponent runs this
-cargo run --release                  # or just share a keyboard
+cargo run --release                                 # the lobby
+cargo run --release -- host                         # or skip it: host a game,
+cargo run --release -- join 42-tiger-marble-ocean   # join one,
+cargo run --release -- local                        # or share a keyboard
 ```
+
+The lobby lets you host, join or share a keyboard. Hosting puts your code
+on the clipboard straight away; `c` copies it again. To join, type the code
+or paste it. Pasting the whole `chess-p2p join ...` command works too. You can
+also start typing the number from the menu. Tab finishes a word once only
+one word fits, and a word that is not in the list is flagged as you type.
+
+Codes are forgiving to retype: any case, spaces instead of dashes, and each
+word can be cut down to its first four letters (`42 tige marb ocea`).
+
+The copy asks the terminal to set the clipboard (OSC 52), which is what works
+over SSH, and on a local machine also runs `pbcopy`, `wl-copy`, `xclip`,
+`xsel` or `clip.exe`, whichever is there. Some terminals ignore OSC 52 (macOS
+Terminal, and tmux unless `set -g set-clipboard on`), so over SSH in one of
+those, select the code by hand.
 
 The host plays white, the joiner plays black.
 
@@ -24,6 +40,7 @@ Right-click puts a piece back down. Everything works from the keyboard too:
 | `f` | flip the board |
 | `p` | cycle piece style: sprites, big letters, art, figurines, letters |
 | `m` | turn mouse reporting off (see below) |
+| `c` | copy your share code, while you wait for an opponent |
 | `r` | resign (confirm with `y`) |
 | `d` | offer or accept a draw |
 | `q` / `esc` | quit |
@@ -78,30 +95,56 @@ own colour, so the board still reads underneath and a washed square under the
 cursor shows both.
 
 While the mouse is captured, the terminal's own text selection is disabled, so
-you cannot drag-select your share code. Press `m` to hand the mouse back (or
-hold shift, in most terminals), copy it, and press `m` again.
+you cannot drag-select text. If copying your share code with `c` did not
+work, press `m` to hand the mouse back (or hold shift, in most terminals),
+select it, and press `m` again.
 
 ## How it works
 
 - **`game.rs`** — the position, the cursor, and legality. [`shakmaty`] supplies
   move generation, so castling, en passant, promotion and mate detection are
   handled properly.
-- **`net.rs`** — [`iroh`] holds a QUIC connection between the two players,
+- **`session/`** — pairing, with nothing chess-specific in it, so other games
+  can use it. [`iroh`] holds a QUIC connection between the two players,
   hole-punching a direct link where it can and falling back to a relay where it
-  can't. One bi-directional stream carries newline-delimited text: `move e2e4`,
-  `resign`, `draw`.
+  can't. See [Pairing](#pairing) below.
+- **`net.rs`** — chess over a paired session. One bi-directional stream carries
+  newline-delimited text: `move e2e4`, `resign`, `draw`.
 - **`ui.rs`** — [`ratatui`] draws. It reads state and never writes it. Its
   `Geometry` picks the largest square size the terminal will take, and is also
   what mouse clicks are tested against, so what you see and what you can click
   cannot drift apart.
 - **`app.rs`** — turns keypresses and network events into state changes.
+- **`lobby.rs`** — the first screen, and the code box with its completion.
+- **`clipboard.rs`** — OSC 52, plus the platform's clipboard tool.
 
 There is no referee. Both peers run the same rules over their own copy of the
 position, and a move that does not check out locally is rejected rather than
 applied, so neither side has to trust the other's arithmetic.
 
-The code you share is your iroh endpoint id — a public key. iroh's discovery
-turns it into a reachable address, which is why `join` needs nothing else.
+## Pairing
+
+A code is a number and three words from the BIP39 English list, which comes to
+about 40 bits: short enough to read out, too many to guess.
+
+1. **Rendezvous.** Both sides stretch the code with Argon2id (64 MiB) into the
+   same ed25519 keypair. The host signs a [pkarr] record with it, naming its
+   iroh endpoint, and publishes that to the Mainline DHT, BitTorrent's
+   network of millions of nodes. The joiner derives the same public key and
+   looks the record up. Nobody runs a server for this. Publishing and looking
+   up each take a few seconds; a joiner who arrives before the record has
+   spread keeps asking for a minute. The stretch is what keeps the codes
+   short: finding live games by walking the code space would mean doing it
+   for every possible code.
+2. **Handshake.** Once connected, the two sides run SPAKE2 with the code and
+   confirm the key they reached, bound to both endpoint ids. Someone without
+   the code gets one guess per connection, and the host stops listening after
+   three wrong ones.
+3. **Game.** The host names the game and version it is playing (`game chess 1`)
+   and the joiner accepts it or backs out, so every game shares one pairing
+   protocol.
+
+A code stops working an hour after it is published.
 
 ## Tests
 
@@ -110,11 +153,19 @@ en passant, mate), checks that every square hit-tests correctly at four
 terminal sizes in both orientations along with the click and drag gestures,
 reads the sprites back out of a rendered buffer to confirm all six pieces are
 drawn and are told apart from each other, and stands up two real iroh endpoints
-in one process to play moves between them.
+in one process to play moves between them. The pairing tests check that codes
+parse the way people retype them, that a wrong code is refused and the host
+gives up after three, and that a joiner backs out of a game it does not have.
+The lobby tests cover the menu, typing and pasting codes, Tab completion,
+flagging bad words as they are typed, and clicking items.
+
+`cargo test -- --ignored` also runs pairing over the real DHT, publishing a
+code and looking it up. It needs the internet and takes around ten seconds.
 
 `cargo run --example render` prints the UI at several sizes as plain text,
 which is the quickest way to iterate on layout.
 
 [`shakmaty`]: https://docs.rs/shakmaty
 [`iroh`]: https://docs.rs/iroh
+[pkarr]: https://pkarr.org
 [`ratatui`]: https://docs.rs/ratatui

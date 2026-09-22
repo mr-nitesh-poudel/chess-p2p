@@ -2,6 +2,8 @@
 //! checked without a human at a keyboard. `cargo run --example render`
 
 use chess_p2p::app::{App, Conn};
+use chess_p2p::clipboard::Copied;
+use chess_p2p::lobby::Lobby;
 use chess_p2p::ui::{self, Geometry, PieceStyle};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -10,8 +12,16 @@ use ratatui::style::Color as Paint;
 use shakmaty::{Color, Square};
 
 fn dump(label: &str, app: &App, w: u16, h: u16) {
+    print_frame(label, w, h, |f| ui::draw(f, app));
+}
+
+fn dump_lobby(label: &str, lobby: &Lobby, w: u16, h: u16) {
+    print_frame(label, w, h, |f| ui::draw_lobby(f, lobby));
+}
+
+fn print_frame(label: &str, w: u16, h: u16, draw: impl FnOnce(&mut ratatui::Frame)) {
     let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
-    terminal.draw(|f| ui::draw(f, app)).unwrap();
+    terminal.draw(draw).unwrap();
     let buf = terminal.backend().buffer().clone();
 
     println!("\n=== {label} ({w}x{h}) ===");
@@ -100,8 +110,18 @@ fn main() {
     hosting.piece_style = PieceStyle::Art;
     hosting.me = Some(Color::White);
     hosting.conn = Conn::Waiting;
-    hosting.share = Some("k4ldzqvj7xnp2mhb6yt8w3rf5sgac9eu".into());
+    hosting.share = Some("42-tiger-marble-ocean".into());
+    hosting.copied = Some(Copied::Terminal);
     dump("hosting, waiting", &hosting, 100, 30);
+
+    let mut lobby = Lobby::new();
+    dump_lobby("lobby", &lobby, 80, 24);
+    lobby.joining = true;
+    lobby.selected = 1;
+    lobby.input = "42-tiger-mar".into();
+    dump_lobby("lobby, typing a code", &lobby, 80, 24);
+    lobby.input = "42-tiger-xylo".into();
+    dump_lobby("lobby, a word that is not one", &lobby, 60, 20);
 
     let mut promo = App::local();
     promo.piece_style = PieceStyle::Art;

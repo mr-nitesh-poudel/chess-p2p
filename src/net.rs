@@ -1,25 +1,27 @@
-//! Peer-to-peer transport over iroh.
+//! Chess's own wire protocol, spoken over a [`session`](crate::session) link.
 //!
-//! One QUIC bi-directional stream carries newline-delimited text: a UCI move
-//! per line, plus a couple of control words. The host accepts the stream, the
-//! joiner opens it.
+//! Pairing, the code and the handshake all happen in the session layer; by the
+//! time this module sees the connection, both sides have proved they hold the
+//! same code and agreed to play chess. What is left is newline-delimited text:
+//! a UCI move per line, plus a couple of control words.
 
 use anyhow::{Context, Result};
-use iroh::endpoint::presets;
+use iroh::endpoint::SendStream;
 use iroh::{Endpoint, EndpointAddr, EndpointId};
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
-pub const ALPN: &[u8] = b"chess-p2p/1";
+use crate::session::{self, Code, Game, Link, Progress, Reader, Target};
 
-/// Opens the stream. Carries the protocol version for future use.
-const HELLO: &str = "hello 1\n";
+pub const CHESS: Game = Game {
+    name: "chess",
+    version: 1,
+};
 
 /// Something the peer did, delivered to the UI loop.
 #[derive(Debug)]
 pub enum NetEvent {
-    /// The endpoint has published its address and can be dialled.
-    Online,
+    /// Pairing moved along.
+    Progress(Progress),
     Connected(EndpointId),
     Move(String),
     Resign,
@@ -57,87 +59,68 @@ impl Net {
         self.endpoint.addr()
     }
 
+    /// Resolves once the endpoint has reached a relay and knows its address.
+    pub async fn online(&self) {
+        self.endpoint.online().await;
+    }
+
     pub async fn shutdown(self) {
         self.endpoint.close().await;
     }
 }
 
-/// Bind an endpoint and wait for one opponent to dial in.
-pub async fn host(events: UnboundedSender<NetEvent>) -> Result<Net> {
-    let endpoint = Endpoint::builder(presets::N0)
-        .alpns(vec![ALPN.to_vec()])
-        .bind()
-        .await
-        .context("binding iroh endpoint")?;
-    let id = endpoint.id();
-    let (out_tx, out_rx) = unbounded_channel();
-
-    tokio::spawn({
+/// Wait for an opponent who knows `code`. With `publish` the code goes on the
+/// DHT so it can be looked up; without it the opponent must dial our address.
+pub async fn host(code: Code, publish: bool, events: UnboundedSender<NetEvent>) -> Result<Net> {
+    let endpoint = session::bind().await?;
+    let progress = reporter(&events);
+    let pairing = {
         let endpoint = endpoint.clone();
-        let events = events.clone();
-        async move {
-            endpoint.online().await;
-            let _ = events.send(NetEvent::Online);
-
-            let result = async {
-                let incoming = endpoint.accept().await.context("endpoint closed")?;
-                let conn = incoming.await.context("accepting connection")?;
-                let peer = conn.remote_id();
-                let (send, recv) = conn.accept_bi().await.context("accepting stream")?;
-                let _ = events.send(NetEvent::Connected(peer));
-                pump(send, recv, out_rx, events.clone()).await
-            }
-            .await;
-            report(result, &events);
-        }
-    });
-
-    Ok(Net {
-        id,
-        out: out_tx,
-        endpoint,
-    })
+        async move { session::host(&endpoint, code, CHESS, publish, progress).await }
+    };
+    Ok(start(endpoint, pairing, events))
 }
 
-/// Dial a host. Given a bare [`EndpointId`], discovery resolves the rest.
-pub async fn join(peer: impl Into<EndpointAddr>, events: UnboundedSender<NetEvent>) -> Result<Net> {
-    let endpoint = Endpoint::bind(presets::N0)
-        .await
-        .context("binding iroh endpoint")?;
-    let id = endpoint.id();
-    let (out_tx, out_rx) = unbounded_channel();
-    let peer = peer.into();
-
-    tokio::spawn({
+/// Pair with the host behind `code`.
+pub async fn join(code: Code, target: Target, events: UnboundedSender<NetEvent>) -> Result<Net> {
+    let endpoint = session::bind().await?;
+    let progress = reporter(&events);
+    let pairing = {
         let endpoint = endpoint.clone();
-        let events = events.clone();
-        async move {
-            let _ = events.send(NetEvent::Online);
-            let result = async {
-                let peer_id = peer.id;
-                let conn = endpoint
-                    .connect(peer, ALPN)
-                    .await
-                    .context("could not reach that opponent")?;
-                let (mut send, recv) = conn.open_bi().await.context("opening stream")?;
-                // QUIC does not put a stream on the wire until it carries data,
-                // so the host's `accept_bi` only returns once we say something.
-                send.write_all(HELLO.as_bytes())
-                    .await
-                    .context("greeting host")?;
-                let _ = events.send(NetEvent::Connected(peer_id));
-                pump(send, recv, out_rx, events.clone()).await
-            }
-            .await;
-            report(result, &events);
-        }
-    });
+        async move { session::join(&endpoint, code, &[CHESS], target, progress).await }
+    };
+    Ok(start(endpoint, pairing, events))
+}
 
-    Ok(Net {
+fn reporter(events: &UnboundedSender<NetEvent>) -> impl Fn(Progress) + Send + 'static {
+    let events = events.clone();
+    move |p| {
+        let _ = events.send(NetEvent::Progress(p));
+    }
+}
+
+/// Pair in the background, then play over the link until one side hangs up.
+fn start(
+    endpoint: Endpoint,
+    pairing: impl Future<Output = Result<Link>> + Send + 'static,
+    events: UnboundedSender<NetEvent>,
+) -> Net {
+    let (out_tx, out_rx) = unbounded_channel();
+    let id = endpoint.id();
+    tokio::spawn(async move {
+        let result = async {
+            let link = pairing.await?;
+            let _ = events.send(NetEvent::Connected(link.peer));
+            pump(link.send, link.lines, out_rx, events.clone()).await
+        }
+        .await;
+        report(result, &events);
+    });
+    Net {
         id,
         out: out_tx,
         endpoint,
-    })
+    }
 }
 
 fn report(result: Result<()>, events: &UnboundedSender<NetEvent>) {
@@ -150,12 +133,11 @@ fn report(result: Result<()>, events: &UnboundedSender<NetEvent>) {
 
 /// Shuttle lines both ways until one side hangs up.
 async fn pump(
-    mut send: iroh::endpoint::SendStream,
-    recv: iroh::endpoint::RecvStream,
+    mut send: SendStream,
+    mut lines: Reader,
     mut out_rx: UnboundedReceiver<Out>,
     events: UnboundedSender<NetEvent>,
 ) -> Result<()> {
-    let mut lines = BufReader::new(recv).lines();
     loop {
         tokio::select! {
             outgoing = out_rx.recv() => {
