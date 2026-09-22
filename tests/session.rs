@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use iroh::SecretKey;
-use tui_tui::net::CHESS;
+use tui_tui::games::chess::GAME as CHESS;
 use tui_tui::session::{
     self, Code, CodeError, Game, Incoming, Listener, Progress, Target, rendezvous,
 };

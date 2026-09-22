@@ -1,14 +1,16 @@
 # tui-tui
 
-Terminal chess for two people, played over a direct peer-to-peer connection.
+Terminal games for two people, played over a direct peer-to-peer connection.
 No server to run, no account, no port forwarding — one of you reads out a
-short code, the other types it in.
+short code, the other types it in. Chess is the first game; pairing, friends
+and the lobby are shared, so more can join it.
 
 ```
 cargo run --release                                 # the lobby
 cargo run --release -- host                         # or skip it: host a game,
 cargo run --release -- join 42-tiger-marble-ocean   # join one,
 cargo run --release -- local                        # or share a keyboard
+cargo run --release -- chess host                   # name the game, if you like
 ```
 
 Anyone you have played turns up in the lobby under **friends**. Pick one to
@@ -16,6 +18,10 @@ challenge them directly, with no code: their lobby asks them to accept.
 Leaving a game (`q`) brings you back to the lobby with your last opponent
 already selected, so a rematch is one keypress away. `x` forgets a friend, and
 **Your name** is what your friends see.
+
+The lobby's first row is the game: `←`/`→` changes it, and hosting, sharing a
+keyboard and challenging a friend all start whichever one it shows. Joining by
+code needs no choosing: you get whatever the host is playing.
 
 The lobby lets you host, join or share a keyboard. Hosting puts your code
 on the clipboard straight away; `c` copies it again. To join, type the code
@@ -120,10 +126,11 @@ A move slides its piece across the board over 160ms, eased in and out. The
 travelling piece is drawn straight onto the buffer after the board, so it is not
 tied to the square grid and can sit halfway between two of them.
 
-Squares you can move to are washed green rather than marked with a dot, more
-strongly for a capture than a quiet move. The wash is mixed against the square's
-own colour, so the board still reads underneath and a washed square under the
-cursor shows both.
+Squares you can move to are marked with a dot, a shade darker than the square,
+and a capture has its corners filled in round a circle instead, since a ring
+would run through the piece. With octant pieces the marks are drawn in octants
+and come out round; otherwise they fall back to half blocks, which every
+terminal draws.
 
 While the mouse is captured, the terminal's own text selection is disabled, so
 you cannot drag-select text. If copying your share code with `c` did not
@@ -132,24 +139,34 @@ select it, and press `m` again.
 
 ## How it works
 
-- **`game.rs`** — the position, the cursor, and legality. [`shakmaty`] supplies
-  move generation, so castling, en passant, promotion and mate detection are
-  handled properly.
-- **`session/`** — pairing, with nothing chess-specific in it, so other games
-  can use it. [`iroh`] holds a QUIC connection between the two players,
-  hole-punching a direct link where it can and falling back to a relay where it
-  can't. See [Pairing](#pairing) below.
-- **`net.rs`** — chess over a paired session. One bi-directional stream carries
-  newline-delimited text: `move e2e4`, `resign`, `draw`.
-- **`ui.rs`** — [`ratatui`] draws. It reads state and never writes it. Its
-  `Geometry` picks the largest square size the terminal will take, and is also
-  what mouse clicks are tested against, so what you see and what you can click
-  cannot drift apart.
-- **`app.rs`** — turns keypresses and network events into state changes.
-- **`lobby.rs`** — the first screen: the menu, the code box with its
+- **`session/`** — pairing, with nothing game-specific in it. [`iroh`] holds a
+  QUIC connection between the two players, hole-punching a direct link where
+  it can and falling back to a relay where it can't. Which game is played is
+  agreed in the handshake. See [Pairing](#pairing) below.
+- **`net.rs`** — a game's messages over a paired session. One bi-directional
+  stream carries newline-delimited text; what the lines say is up to the game.
+- **`games/`** — the games. Each implements `Play`: take keys, clicks and the
+  peer's lines, and draw. `Kind` lists them, and `Table` is the part every
+  game shares: the opponent, the connection and the share code.
+  - **`games/chess/`** — `rules.rs` holds the position and legality, with
+    [`shakmaty`] supplying move generation, so castling, en passant, promotion
+    and mate detection are handled properly. `app.rs` turns keys and messages
+    into state changes; `ui.rs` draws with [`ratatui`], reading state and
+    never writing it, and its `Geometry` is also what clicks are tested
+    against, so what you see and what you can click cannot drift apart.
+    `canvas.rs` draws the pieces, and `protocol.rs` is what the two sides say:
+    `move e2e4`, `resign`, `draw`.
+- **`lobby/`** — the first screen: the game, the menu, the code box with its
   completion, and friends.
+- **`hub.rs`** — the main loop. It pairs players, answers invites, and hands
+  each game its input without knowing which game it is.
 - **`profile.rs`** — your identity, name and friends, kept between runs.
 - **`clipboard.rs`** — OSC 52, plus the platform's clipboard tool.
+- **`ui.rs`** — the palette and the few drawing helpers every screen uses.
+
+Adding a game means a module under `games/` with its own rules, screen and
+messages, a `Play` implementation, and a line in `Kind`. The lobby, pairing,
+friends and invites pick it up from there.
 
 There is no referee. Both peers run the same rules over their own copy of the
 position, and a move that does not check out locally is rejected rather than

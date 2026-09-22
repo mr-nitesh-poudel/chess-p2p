@@ -3,8 +3,8 @@
 use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 use shakmaty::{Role, Square};
-use tui_tui::app::App;
-use tui_tui::ui::Geometry;
+use tui_tui::games::chess::app::App;
+use tui_tui::games::chess::ui::Geometry;
 
 fn geometry(w: u16, h: u16) -> Geometry {
     Geometry::new(Rect::new(0, 0, w, h))

@@ -10,9 +10,11 @@ use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use shakmaty::{Color, Position, Square};
-use tui_tui::app::{App, CHECK_PULSE, Ending, FINALE, RESIGN_FINALE, SHUDDER, SLIDE, TOPPLE};
-use tui_tui::canvas::Dots;
-use tui_tui::ui::{self, Geometry, PieceStyle, canvas_colour, piece_ink};
+use tui_tui::games::chess::app::{
+    App, CHECK_PULSE, Ending, FINALE, RESIGN_FINALE, SHUDDER, SLIDE, TOPPLE,
+};
+use tui_tui::games::chess::canvas::Dots;
+use tui_tui::games::chess::ui::{self, Geometry, PieceStyle, canvas_colour, piece_ink};
 
 const W: u16 = 120;
 const H: u16 = 40;
@@ -138,7 +140,7 @@ fn opponent_animates(style: PieceStyle) {
     let start = Instant::now();
     app.clock = Some(start);
     app.game.play_uci("e2e4").unwrap();
-    app.on_net(tui_tui::net::NetEvent::Move("e7e5".into()));
+    app.on_net(tui_tui::net::NetEvent::Line("move e7e5".into()));
 
     let (slide, _) = app.slide_at().expect("a received move should travel");
     assert_eq!((slide.from, slide.to), (Square::E7, Square::E5));

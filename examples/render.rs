@@ -6,11 +6,12 @@ use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::Color as Paint;
 use shakmaty::{Color, Square};
-use tui_tui::app::{App, Conn};
 use tui_tui::clipboard::Copied;
-use tui_tui::lobby::{Field, Lobby};
+use tui_tui::games::Conn;
+use tui_tui::games::chess::App;
+use tui_tui::games::chess::ui::{self, Geometry, PieceStyle};
+use tui_tui::lobby::{self, Field, Invited, Lobby};
 use tui_tui::profile::Contact;
-use tui_tui::ui::{self, Geometry, PieceStyle};
 
 fn dump(label: &str, app: &App, w: u16, h: u16) {
     print_frame(label, w, h, |f| ui::draw(f, app));
@@ -26,7 +27,7 @@ fn friend(name: &str, games: u32, last_played: u64) -> Contact {
 }
 
 fn dump_lobby(label: &str, lobby: &Lobby, w: u16, h: u16) {
-    print_frame(label, w, h, |f| ui::draw_lobby(f, lobby));
+    print_frame(label, w, h, |f| lobby::draw_lobby(f, lobby));
 }
 
 fn print_frame(label: &str, w: u16, h: u16, draw: impl FnOnce(&mut ratatui::Frame)) {
@@ -119,9 +120,9 @@ fn main() {
     let mut hosting = App::local();
     hosting.piece_style = PieceStyle::Art;
     hosting.me = Some(Color::White);
-    hosting.conn = Conn::Waiting;
-    hosting.share = Some("42-tiger-marble-ocean".into());
-    hosting.copied = Some(Copied::Terminal);
+    hosting.table.conn = Conn::Waiting;
+    hosting.table.share = Some("42-tiger-marble-ocean".into());
+    hosting.table.copied = Some(Copied::Terminal);
     dump("hosting, waiting", &hosting, 100, 30);
 
     let mut lobby = Lobby::new();
@@ -137,15 +138,18 @@ fn main() {
         friend("bob", 1, now - 30 * 3600),
         friend("a very long name indeed, really", 12, now - 20 * 86400),
     ]);
-    lobby.selected = 3;
+    lobby.selected = 4;
     dump_lobby("lobby with friends", &lobby, 80, 30);
-    lobby.invite = Some("alice".into());
+    lobby.invite = Some(Invited {
+        name: "alice".into(),
+        game: tui_tui::games::Kind::Chess,
+    });
     dump_lobby("an invite", &lobby, 80, 30);
     lobby.invite = None;
 
     lobby.set_friends(vec![]);
     lobby.editing = Some(Field::Code);
-    lobby.selected = 1;
+    lobby.selected = 2;
     lobby.input = "42-tiger-mar".into();
     dump_lobby("lobby, typing a code", &lobby, 80, 24);
     lobby.input = "42-tiger-xylo".into();

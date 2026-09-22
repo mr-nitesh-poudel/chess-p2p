@@ -1,8 +1,8 @@
-//! The first screen: host, join with a code, challenge a friend, or share a
-//! keyboard.
+//! The first screen: pick a game, then host, join with a code, challenge a
+//! friend, or share a keyboard.
 //!
-//! Like [`App`](crate::app::App), this only holds state and decides what a key
-//! or click means; `ui` draws it and `main` acts on the [`Choice`] it returns.
+//! Like a game, this only holds state and decides what a key or click means;
+//! [`draw_lobby`] draws it and `main` acts on the [`Choice`] it returns.
 
 use iroh::EndpointId;
 use ratatui::crossterm::event::{
@@ -10,10 +10,14 @@ use ratatui::crossterm::event::{
 };
 use ratatui::layout::Rect;
 
+use crate::games::Kind;
 use crate::profile::Contact;
 use crate::session::Code;
 use crate::session::code::{complete, is_prefix, is_word};
-use crate::ui::LobbyGeometry;
+
+mod ui;
+
+pub use ui::{LobbyGeometry, draw_lobby};
 
 /// Friends listed at once, most recently played first.
 pub const FRIENDS_SHOWN: usize = 6;
@@ -22,6 +26,8 @@ const NAME_MAX: usize = 24;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Item {
+    /// Which game hosting, a local game or a challenge starts.
+    Game,
     Host,
     Join,
     Local,
@@ -32,6 +38,7 @@ pub enum Item {
 impl Item {
     pub fn label(self) -> &'static str {
         match self {
+            Item::Game => "Game",
             Item::Host => "Host a game",
             Item::Join => "Join a game",
             Item::Local => "Play on one keyboard",
@@ -70,6 +77,13 @@ pub enum Choice {
     DeclineInvite,
 }
 
+/// A friend waiting for an answer to their invite.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Invited {
+    pub name: String,
+    pub game: Kind,
+}
+
 /// How the code typed so far is looking, for the line under it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Entry {
@@ -82,6 +96,8 @@ pub enum Entry {
 pub struct Lobby {
     /// An index into [`Lobby::rows`].
     pub selected: usize,
+    /// An index into [`Kind::ALL`].
+    pub game: usize,
     pub editing: Option<Field>,
     /// The code typed so far.
     pub input: String,
@@ -93,8 +109,7 @@ pub struct Lobby {
     pub guest: bool,
     /// Most recently played first.
     pub friends: Vec<Contact>,
-    /// The name of a friend waiting for an answer to their invite.
-    pub invite: Option<String>,
+    pub invite: Option<Invited>,
     /// A friend waiting on "forget them? y/n".
     pub forgetting: Option<usize>,
     /// Something to tell the player, until they press a key.
@@ -112,7 +127,10 @@ impl Default for Lobby {
 impl Lobby {
     pub fn new() -> Self {
         Self {
-            selected: 0,
+            // Past the game, onto hosting: most of the time the game is
+            // already the one wanted.
+            selected: 1,
+            game: 0,
             editing: None,
             input: String::new(),
             name_input: String::new(),
@@ -129,6 +147,7 @@ impl Lobby {
     pub fn rows(&self) -> Vec<Row> {
         let friends = self.friends.len().min(FRIENDS_SHOWN);
         [
+            Row::Item(Item::Game),
             Row::Item(Item::Host),
             Row::Item(Item::Join),
             Row::Item(Item::Local),
@@ -137,6 +156,17 @@ impl Lobby {
         .chain((0..friends).map(Row::Friend))
         .chain([Row::Item(Item::Name), Row::Item(Item::Quit)])
         .collect()
+    }
+
+    /// The game hosting, a local game or a challenge would start.
+    pub fn game(&self) -> Kind {
+        Kind::ALL[self.game % Kind::ALL.len()]
+    }
+
+    /// Steps through the games, wrapping round at either end.
+    fn next_game(&mut self, step: isize) {
+        let n = Kind::ALL.len() as isize;
+        self.game = (self.game as isize + step).rem_euclid(n) as usize;
     }
 
     fn row_of(&self, item: Item) -> usize {
@@ -201,6 +231,12 @@ impl Lobby {
             }
             KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
                 self.selected = (self.selected + 1) % rows.len();
+            }
+            KeyCode::Left | KeyCode::Char('h') if rows[self.selected] == Row::Item(Item::Game) => {
+                self.next_game(-1);
+            }
+            KeyCode::Right | KeyCode::Char('l') if rows[self.selected] == Row::Item(Item::Game) => {
+                self.next_game(1);
             }
             KeyCode::Enter | KeyCode::Char(' ') => return self.activate(self.selected),
             KeyCode::Char('x') => {
@@ -314,6 +350,10 @@ impl Lobby {
 
     fn activate(&mut self, i: usize) -> Option<Choice> {
         match *self.rows().get(i)? {
+            Row::Item(Item::Game) => {
+                self.next_game(1);
+                None
+            }
             Row::Item(Item::Host) => Some(Choice::Host),
             Row::Item(Item::Join) => {
                 self.edit(Field::Code);

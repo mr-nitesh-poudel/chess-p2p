@@ -6,8 +6,8 @@ use ratatui::Terminal;
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
 use shakmaty::Square;
-use tui_tui::app::App;
-use tui_tui::ui::{self, Geometry, PieceStyle};
+use tui_tui::games::chess::app::App;
+use tui_tui::games::chess::ui::{self, Geometry, PieceStyle};
 
 const W: u16 = 120;
 const H: u16 = 40;

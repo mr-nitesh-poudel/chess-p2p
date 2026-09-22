@@ -3,7 +3,7 @@
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use tui_tui::app::App;
+use tui_tui::games::chess::app::App;
 
 fn press(app: &mut App, code: KeyCode) {
     app.on_key(KeyEvent::new(code, KeyModifiers::NONE));
@@ -11,7 +11,9 @@ fn press(app: &mut App, code: KeyCode) {
 
 fn footer(app: &App) -> String {
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-    terminal.draw(|f| tui_tui::ui::draw(f, app)).unwrap();
+    terminal
+        .draw(|f| tui_tui::games::chess::ui::draw(f, app))
+        .unwrap();
     let buf = terminal.backend().buffer();
     (0..buf.area.width)
         .map(|x| buf[(x, buf.area.height - 1)].symbol())

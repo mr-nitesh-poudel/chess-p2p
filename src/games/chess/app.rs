@@ -1,8 +1,7 @@
-//! Application state and key handling: the bit that decides what a keypress means.
+//! A game of chess in progress, and what a key, click or message does to it.
 
 use std::time::{Duration, Instant};
 
-use iroh::EndpointId;
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -10,11 +9,11 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color as Paint, Modifier, Style};
 use shakmaty::{Color, Move, Piece, Position, Role, Square};
 
-use crate::clipboard::Copied;
-use crate::game::{Game, PROMOTION_ROLES, ui_to};
-use crate::net::{Net, NetEvent, Out};
-use crate::session::{Code, MAX_WRONG_CODES, Progress};
-use crate::ui::{Geometry, PieceStyle};
+use super::protocol::Msg;
+use super::rules::{Game, PROMOTION_ROLES, ui_to};
+use super::ui::{Geometry, PieceStyle};
+use crate::games::{Conn, Kind, Seat, Table};
+use crate::net::NetEvent;
 
 /// How long a piece takes to travel between two squares.
 pub const SLIDE: Duration = Duration::from_millis(160);
@@ -89,37 +88,12 @@ pub struct Slide {
     pub start: Instant,
 }
 
-pub enum Conn {
-    /// Hot-seat: no network at all.
-    Local,
-    /// Hosting, putting the code on the DHT.
-    Publishing,
-    /// Hosting, with the code published and nobody in yet.
-    Waiting,
-    /// Joining, finding the host behind the code.
-    LookingUp,
-    /// Joining, found the host and pairing with it.
-    Dialling,
-    /// Waiting for this friend to answer our invite.
-    Inviting(String),
-    Playing,
-    Lost(String),
-}
-
 pub struct App {
     pub game: Game,
     /// The side we are allowed to move, or `None` when sharing a keyboard.
     pub me: Option<Color>,
-    pub net: Option<Net>,
-    pub peer: Option<EndpointId>,
-    /// What the peer calls itself.
-    pub peer_name: Option<String>,
-    pub share: Option<String>,
-    /// Text waiting for the main loop to put on the clipboard.
-    pub copy_request: Option<String>,
-    /// How the last copy of the share code went.
-    pub copied: Option<Copied>,
-    pub conn: Conn,
+    /// The opponent, and how the connection to them is going.
+    pub table: Table,
     pub flipped: bool,
     pub piece_style: PieceStyle,
     /// Whether the terminal is reporting mouse events to us.
@@ -157,13 +131,7 @@ impl App {
         Self {
             game: Game::new(),
             me: None,
-            net: None,
-            peer: None,
-            peer_name: None,
-            share: None,
-            copy_request: None,
-            copied: None,
-            conn: Conn::Local,
+            table: Table::local(),
             flipped: false,
             piece_style: PieceStyle::Octant,
             mouse: true,
@@ -185,42 +153,25 @@ impl App {
         }
     }
 
-    /// A game against someone who is not connected yet. `code` is what to
-    /// show for them to join with, when hosting.
-    pub fn networked(me: Color, conn: Conn, code: Option<Code>) -> Self {
+    /// A game at `seat`. The host plays white.
+    pub fn new(seat: Seat, table: Table) -> Self {
+        let me = match seat {
+            Seat::Local => {
+                return Self {
+                    table,
+                    ..Self::local()
+                };
+            }
+            Seat::Host => Color::White,
+            Seat::Guest => Color::Black,
+        };
         Self {
             me: Some(me),
             // Always sit behind your own pieces.
             flipped: me == Color::Black,
-            share: code.map(|c| c.to_string()),
-            conn,
+            table,
             ..Self::local()
         }
-    }
-
-    /// The opponent is in.
-    pub fn attach(&mut self, net: Net, name: &str) {
-        self.peer = Some(net.peer);
-        self.peer_name = Some(name.to_string());
-        self.net = Some(net);
-        self.conn = Conn::Playing;
-    }
-
-    /// Ask for the share code to go on the clipboard, while it is still of use.
-    pub fn copy_share(&mut self) {
-        if matches!(self.conn, Conn::Publishing | Conn::Waiting) {
-            self.copy_request = self.share.clone();
-        }
-    }
-
-    /// How to refer to the opponent: their name, else a short id.
-    pub fn peer_label(&self) -> String {
-        if let Some(name) = &self.peer_name {
-            return name.clone();
-        }
-        self.peer
-            .map(|p| p.fmt_short().to_string())
-            .unwrap_or_else(|| "—".into())
     }
 
     fn now(&self) -> Instant {
@@ -398,13 +349,11 @@ impl App {
     fn broadcast(&mut self, m: Move) {
         self.begin_slide(m);
         let uci = self.game.to_uci(m);
-        self.send(Out::Move(uci));
+        self.send(Msg::Move(uci));
     }
 
-    fn send(&self, msg: Out) {
-        if let Some(net) = &self.net {
-            let _ = net.out.send(msg);
-        }
+    fn send(&self, msg: Msg) {
+        self.table.send(msg.line());
     }
 
     /// Is it our move? Always true in hot-seat.
@@ -511,7 +460,7 @@ impl App {
                     let me = self.me.unwrap_or(self.game.turn());
                     self.game.resigned = Some(me);
                     self.ended = Some(self.now());
-                    self.send(Out::Resign);
+                    self.send(Msg::Resign);
                 }
                 _ => self.confirm_resign = false,
             }
@@ -531,7 +480,7 @@ impl App {
             KeyCode::Char('f') => self.flipped = !self.flipped,
             KeyCode::Char('p') => self.piece_style = self.piece_style.next(),
             KeyCode::Char('m') => self.mouse = !self.mouse,
-            KeyCode::Char('c') => self.copy_share(),
+            KeyCode::Char('c') => self.table.copy_share(),
             KeyCode::Char('r') if !self.game.over() => self.confirm_resign = true,
             KeyCode::Char('d') if !self.game.over() => self.draw_key(),
             KeyCode::Left | KeyCode::Char('h') => self.nudge(-1, 0),
@@ -603,26 +552,32 @@ impl App {
         if self.draw_offered {
             self.draw_offered = false;
             self.draw_agreed = true;
-            self.send(Out::Draw);
-        } else if self.net.is_some() && !self.draw_sent {
+            self.send(Msg::Draw);
+        } else if self.table.is_networked() && !self.draw_sent {
             self.draw_sent = true;
-            self.send(Out::Draw);
+            self.send(Msg::Draw);
         }
     }
 
     pub fn on_net(&mut self, event: NetEvent) {
         match event {
-            NetEvent::Progress(Progress::Listed) => self.conn = Conn::Waiting,
-            NetEvent::Progress(Progress::Found) => self.conn = Conn::Dialling,
-            NetEvent::Progress(Progress::WrongCode { attempts }) => {
-                self.note = Some(format!(
-                    "someone tried a wrong code ({attempts} of {MAX_WRONG_CODES})"
-                ));
+            NetEvent::Progress(p) => {
+                if let Some(note) = self.table.on_progress(p, Kind::Chess) {
+                    self.note = Some(note);
+                }
             }
-            NetEvent::Progress(Progress::Declined) => {
-                self.note = Some("someone joined who cannot play chess".into());
+            NetEvent::Line(line) => {
+                if let Some(msg) = Msg::parse(&line) {
+                    self.on_msg(msg);
+                }
             }
-            NetEvent::Move(uci) => match self.game.play_uci(&uci) {
+            NetEvent::Disconnected(why) => self.table.conn = Conn::Lost(why),
+        }
+    }
+
+    fn on_msg(&mut self, msg: Msg) {
+        match msg {
+            Msg::Move(uci) => match self.game.play_uci(&uci) {
                 // Playing on silently declines any outstanding draw offer.
                 Ok(m) => {
                     self.begin_slide(m);
@@ -633,12 +588,12 @@ impl App {
                 // the two sides have diverged. Say so rather than guessing.
                 Err(why) => self.note = Some(format!("peer sent {why}")),
             },
-            NetEvent::Resign => {
+            Msg::Resign => {
                 self.game.resigned = self.me.map(|me| !me);
                 self.ended = Some(self.now());
             }
             // A draw message answers our own offer, or starts a new one.
-            NetEvent::Draw => {
+            Msg::Draw => {
                 if self.draw_sent {
                     self.draw_sent = false;
                     self.draw_agreed = true;
@@ -646,7 +601,6 @@ impl App {
                     self.draw_offered = true;
                 }
             }
-            NetEvent::Disconnected(why) => self.conn = Conn::Lost(why),
         }
     }
 

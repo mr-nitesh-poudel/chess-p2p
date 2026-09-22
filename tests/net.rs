@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use iroh::{Endpoint, SecretKey};
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
-use tui_tui::net::{self, CHESS, NetEvent, Out};
+use tui_tui::games::chess::GAME as CHESS;
+use tui_tui::net::{self, NetEvent};
 use tui_tui::session::{self, Code, Incoming, Link, Listener, MAX_WRONG_CODES, Progress, Target};
 
 /// Wait for the next thing on a channel, failing loudly rather than hanging.
@@ -74,21 +75,21 @@ async fn two_peers_pair_by_code_and_play() {
     let (tx, mut bob_rx) = unbounded_channel();
     let black = net::play(bobs, tx);
 
-    white.out.send(Out::Move("e2e4".into())).unwrap();
+    white.send("move e2e4".into());
     match next(&mut bob_rx, "white's move").await {
-        NetEvent::Move(uci) => assert_eq!(uci, "e2e4"),
-        other => panic!("expected Move, got {other:?}"),
+        NetEvent::Line(line) => assert_eq!(line, "move e2e4"),
+        other => panic!("expected a line, got {other:?}"),
     }
-    black.out.send(Out::Move("e7e5".into())).unwrap();
+    black.send("move e7e5".into());
     match next(&mut alice_rx, "black's reply").await {
-        NetEvent::Move(uci) => assert_eq!(uci, "e7e5"),
-        other => panic!("expected Move, got {other:?}"),
+        NetEvent::Line(line) => assert_eq!(line, "move e7e5"),
+        other => panic!("expected a line, got {other:?}"),
     }
-    black.out.send(Out::Resign).unwrap();
-    assert!(matches!(
-        next(&mut alice_rx, "resignation").await,
-        NetEvent::Resign
-    ));
+    black.send("resign".into());
+    match next(&mut alice_rx, "resignation").await {
+        NetEvent::Line(line) => assert_eq!(line, "resign"),
+        other => panic!("expected a line, got {other:?}"),
+    }
 
     // Leaving says goodbye, so the other side hears why rather than just
     // losing the connection.

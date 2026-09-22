@@ -5,11 +5,12 @@ use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::Rect;
-use tui_tui::app::{App, Conn};
-use tui_tui::lobby::{Choice, Entry, FRIENDS_SHOWN, Field, Item, Lobby, Row};
+use tui_tui::games::chess::App;
+use tui_tui::games::{Conn, Kind};
+use tui_tui::lobby::LobbyGeometry;
+use tui_tui::lobby::{Choice, Entry, FRIENDS_SHOWN, Field, Invited, Item, Lobby, Row};
 use tui_tui::profile::Contact;
 use tui_tui::session::Code;
-use tui_tui::ui::LobbyGeometry;
 
 fn key(lobby: &mut Lobby, code: KeyCode) -> Option<Choice> {
     lobby.on_key(KeyEvent::new(code, KeyModifiers::NONE))
@@ -54,8 +55,11 @@ fn the_menu_picks_what_is_selected() {
     key(&mut lobby, KeyCode::Down);
     assert_eq!(key(&mut lobby, KeyCode::Enter), Some(Choice::Local));
 
-    // Wrapping upwards from the top lands on the last item.
+    // Above hosting is the game, and wrapping upwards from there lands on
+    // the last item.
     let mut lobby = Lobby::new();
+    key(&mut lobby, KeyCode::Up);
+    assert_eq!(lobby.rows()[lobby.selected], Row::Item(Item::Game));
     key(&mut lobby, KeyCode::Up);
     assert_eq!(key(&mut lobby, KeyCode::Enter), Some(Choice::Quit));
 
@@ -63,6 +67,34 @@ fn the_menu_picks_what_is_selected() {
         key(&mut Lobby::new(), KeyCode::Char('q')),
         Some(Choice::Quit)
     );
+}
+
+#[test]
+fn the_game_comes_first_and_changes_in_place() {
+    let mut lobby = Lobby::new();
+    assert_eq!(lobby.rows()[0], Row::Item(Item::Game));
+    assert_eq!(lobby.rows()[lobby.selected], Row::Item(Item::Host));
+    assert_eq!(lobby.game(), Kind::ALL[0]);
+
+    key(&mut lobby, KeyCode::Up);
+    for code in [KeyCode::Right, KeyCode::Left, KeyCode::Enter] {
+        assert_eq!(key(&mut lobby, code), None, "{code:?} starts nothing");
+        assert_eq!(lobby.rows()[lobby.selected], Row::Item(Item::Game));
+    }
+    // Round the list and back to where it started, however long it is.
+    for _ in 0..Kind::ALL.len() {
+        key(&mut lobby, KeyCode::Right);
+    }
+    assert_eq!(lobby.game(), Kind::ALL[0]);
+}
+
+#[test]
+fn left_and_right_only_change_the_game_on_its_row() {
+    let mut lobby = Lobby::new();
+    lobby.game = 0;
+    key(&mut lobby, KeyCode::Right);
+    assert_eq!(lobby.game, 0);
+    assert_eq!(lobby.rows()[lobby.selected], Row::Item(Item::Host));
 }
 
 #[test]
@@ -299,10 +331,17 @@ fn renaming_edits_in_place() {
     assert_eq!(lobby.editing, None);
 }
 
+fn alice_invites() -> Invited {
+    Invited {
+        name: "alice".into(),
+        game: Kind::Chess,
+    }
+}
+
 #[test]
 fn an_invite_is_answered_before_anything_else() {
     let mut lobby = Lobby::new();
-    lobby.invite = Some("alice".into());
+    lobby.invite = Some(alice_invites());
     // Menu keys do nothing while it is up.
     assert_eq!(key(&mut lobby, KeyCode::Char('q')), None);
     assert_eq!(key(&mut lobby, KeyCode::Down), None);
@@ -312,7 +351,7 @@ fn an_invite_is_answered_before_anything_else() {
     );
     assert_eq!(lobby.invite, None);
 
-    lobby.invite = Some("alice".into());
+    lobby.invite = Some(alice_invites());
     assert_eq!(key(&mut lobby, KeyCode::Esc), Some(Choice::DeclineInvite));
     assert_eq!(lobby.invite, None);
 }
@@ -320,18 +359,24 @@ fn an_invite_is_answered_before_anything_else() {
 #[test]
 fn c_copies_the_code_only_while_it_is_needed() {
     let mut app = App::local();
-    app.share = Some("42-tiger-marble-ocean".into());
+    app.table.share = Some("42-tiger-marble-ocean".into());
     let c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE);
 
     app.on_key(c);
-    assert_eq!(app.copy_request, None, "hot-seat has nothing to share");
+    assert_eq!(
+        app.table.copy_request, None,
+        "hot-seat has nothing to share"
+    );
 
-    app.conn = Conn::Waiting;
+    app.table.conn = Conn::Waiting;
     app.on_key(c);
-    assert_eq!(app.copy_request.as_deref(), Some("42-tiger-marble-ocean"));
+    assert_eq!(
+        app.table.copy_request.as_deref(),
+        Some("42-tiger-marble-ocean")
+    );
 
-    app.copy_request = None;
-    app.conn = Conn::Playing;
+    app.table.copy_request = None;
+    app.table.conn = Conn::Playing;
     app.on_key(c);
-    assert_eq!(app.copy_request, None, "the opponent is already in");
+    assert_eq!(app.table.copy_request, None, "the opponent is already in");
 }

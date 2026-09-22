@@ -1,9 +1,7 @@
-//! Terminal chess played peer-to-peer over iroh.
+//! Terminal games played peer-to-peer over iroh.
 
-pub mod app;
-pub mod canvas;
 pub mod clipboard;
-pub mod game;
+pub mod games;
 pub mod lobby;
 pub mod net;
 pub mod profile;

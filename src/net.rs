@@ -1,9 +1,10 @@
-//! Chess's own wire protocol, spoken over a [`session`](crate::session) link.
+//! Carrying a game's messages over a [`session`](crate::session) link.
 //!
 //! Pairing, codes and invites all happen in the session layer; by the time
 //! this module sees the connection, both sides know who the other is and have
-//! agreed to play chess. What is left is newline-delimited text: a UCI move
-//! per line, plus a few control words.
+//! agreed on a game. What is left is newline-delimited text, one message a
+//! line. What the lines say is up to each game; the only word reserved here
+//! is `bye`, for leaving.
 
 use std::time::Duration;
 
@@ -12,47 +13,30 @@ use iroh::EndpointId;
 use iroh::endpoint::SendStream;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
-use crate::session::{Game, Link, Progress, Reader};
-
-pub const CHESS: Game = Game {
-    name: "chess",
-    version: 1,
-};
+use crate::session::{Link, Progress, Reader};
 
 /// Something the peer did, delivered to the UI loop.
 #[derive(Debug)]
 pub enum NetEvent {
     /// Pairing by code moved along.
     Progress(Progress),
-    Move(String),
-    Resign,
-    Draw,
+    /// One of the game's own messages, without its newline.
+    Line(String),
     Disconnected(String),
-}
-
-/// Something to tell the peer.
-#[derive(Debug)]
-pub enum Out {
-    Move(String),
-    Resign,
-    Draw,
-}
-
-impl Out {
-    fn line(&self) -> String {
-        match self {
-            Out::Move(uci) => format!("move {uci}\n"),
-            Out::Resign => "resign\n".into(),
-            Out::Draw => "draw\n".into(),
-        }
-    }
 }
 
 /// A game in progress with a peer. Dropping it leaves the game, and the peer
 /// is told so.
 pub struct Net {
     pub peer: EndpointId,
-    pub out: UnboundedSender<Out>,
+    /// Lines for the peer, without their newlines.
+    pub out: UnboundedSender<String>,
+}
+
+impl Net {
+    pub fn send(&self, line: String) {
+        let _ = self.out.send(line);
+    }
 }
 
 /// Play over `link` until one side hangs up.
@@ -79,7 +63,7 @@ enum Ended {
 async fn pump(
     mut send: SendStream,
     mut lines: Reader,
-    mut out_rx: UnboundedReceiver<Out>,
+    mut out_rx: UnboundedReceiver<String>,
     events: &UnboundedSender<NetEvent>,
 ) -> Result<Ended> {
     loop {
@@ -94,22 +78,17 @@ async fn pump(
                     }
                     return Ok(Ended::ByUs);
                 };
-                send.write_all(msg.line().as_bytes()).await.context("writing to peer")?;
+                send.write_all(format!("{msg}\n").as_bytes()).await.context("writing to peer")?;
             }
             incoming = lines.next_line() => {
                 let Some(line) = incoming.context("reading from peer")? else {
                     return Ok(Ended::ByThem);
                 };
-                let (word, rest) = line.trim_end().split_once(' ').unwrap_or((line.trim_end(), ""));
-                let event = match word {
-                    "move" => NetEvent::Move(rest.to_string()),
-                    "resign" => NetEvent::Resign,
-                    "draw" => NetEvent::Draw,
-                    "bye" => return Ok(Ended::ByThem),
-                    // Unknown verbs are ignored so the protocol can grow.
-                    _ => continue,
-                };
-                if events.send(event).is_err() {
+                let line = line.trim_end();
+                if line == "bye" {
+                    return Ok(Ended::ByThem);
+                }
+                if events.send(NetEvent::Line(line.to_string())).is_err() {
                     return Ok(Ended::ByUs);
                 }
             }

@@ -6,9 +6,9 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use shakmaty::{Color, File, Rank, Role, Square};
-use tui_tui::app::App;
-use tui_tui::canvas::Dots;
-use tui_tui::ui::{self, Geometry, PieceStyle, canvas_colour};
+use tui_tui::games::chess::app::App;
+use tui_tui::games::chess::canvas::Dots;
+use tui_tui::games::chess::ui::{self, Geometry, PieceStyle, canvas_colour};
 
 /// 11x5 squares.
 const BIG: (u16, u16) = (140, 52);

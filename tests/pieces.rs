@@ -5,8 +5,8 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use shakmaty::{Color, Role, Square};
-use tui_tui::app::App;
-use tui_tui::ui::{self, Geometry, PieceStyle, piece_ink};
+use tui_tui::games::chess::app::App;
+use tui_tui::games::chess::ui::{self, Geometry, PieceStyle, piece_ink};
 
 /// The pixel grid actually drawn for one square: `O` body, `#` outline,
 /// `.` the square showing through.
