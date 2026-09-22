@@ -1,274 +1,145 @@
 # tui-tui
 
-Terminal games for two people, played over a direct peer-to-peer connection.
-No server to run, no account, no port forwarding — one of you reads out a
-short code, the other types it in. Chess is the first game; pairing, friends
-and the lobby are shared, so more can join it.
+Two people, two terminals, one game. No server, no account, no port forwarding.
+
+You read out a code like `42-tiger-marble-ocean`, your friend types it in, and
+you are playing. The code is not an address on somebody's server — it *is* the
+address, stretched into a keypair and looked up on a public DHT. Chess is the
+first game; the lobby, pairing and friends are shared, so more can follow.
+
+```
+╭───────────────── tui-tui ──────────────────╮
+│                                            │
+│   Game        ‹ Chess ›                    │
+│                                            │
+│   Host a game                              │
+│   get a code to send your opponent         │
+│   Join a game                              │
+│   type in the code your opponent sent      │
+│   Play on one keyboard                     │
+│   two players taking turns                 │
+│                                            │
+│ friends                                    │
+│ ▸ alice              3 games · 3h ago      │
+│   bob                1 game · yesterday    │
+│                                            │
+│   Your name                                │
+│   ace — what friends see                   │
+│   Quit                                     │
+│                                            │
+│ code 42-tiger-marble-ocean                 │
+╰────────────────────────────────────────────╯
+```
 
 ## Install
 
 ```
-cargo install --path .        # puts `tuitui` on your PATH
+cargo install --path .    # puts `tuitui` on your PATH
 ```
 
-## Use
+## Play
 
 ```
 tuitui                            # the lobby
-tuitui play chess                 # the lobby, on a game of your choosing
-tuitui host                       # or skip the lobby: host a game,
+tuitui host                       # or skip it: host a game,
 tuitui join 42-tiger-marble-ocean # join one,
 tuitui local                      # or share a keyboard
+tuitui play chess                 # the lobby, on a game of your choosing
 ```
 
-Every command but `join` takes an optional game; without one you get the
-first, which is chess. Joining never names a game, since the host's code
-already says which it is. `tuitui --help` lists the lot.
+Every command but `join` takes an optional game. Joining never needs one: you
+get whatever the host is playing. Host plays white.
 
-Anyone you have played turns up in the lobby under **friends**. Pick one to
-challenge them directly, with no code: their lobby asks them to accept.
-Leaving a game (`q`) brings you back to the lobby with your last opponent
-already selected, so a rematch is one keypress away. `x` forgets a friend, and
-**Your name** is what your friends see.
+Codes are forgiving. Any case, spaces instead of dashes, and four letters a
+word is plenty — `42 tige marb ocea` gets you there. Tab finishes a word, and
+a word that isn't in the list is flagged while you type it. Paste the whole
+`tuitui join ...` command if that's what landed in your clipboard.
 
-The lobby's first row is the game: `←`/`→` changes it, and hosting, sharing a
-keyboard and challenging a friend all start whichever one it shows. Joining by
-code needs no choosing: you get whatever the host is playing.
+## At the board
 
-The lobby lets you host, join or share a keyboard. Hosting puts your code
-on the clipboard straight away; `c` copies it again. To join, type the code
-or paste it. Pasting the whole `tuitui join ...` command works too. You can
-also start typing the number from the menu. Tab finishes a word once only
-one word fits, and a word that is not in the list is flagged as you type.
-
-Codes are forgiving to retype: any case, spaces instead of dashes, and each
-word can be cut down to its first four letters (`42 tige marb ocea`).
-
-The copy asks the terminal to set the clipboard (OSC 52), which is what works
-over SSH, and on a local machine also runs `pbcopy`, `wl-copy`, `xclip`,
-`xsel` or `clip.exe`, whichever is there. Some terminals ignore OSC 52 (macOS
-Terminal, and tmux unless `set -g set-clipboard on`), so over SSH in one of
-those, select the code by hand.
-
-The host plays white, the joiner plays black.
-
-## Controls
-
-Click a piece and click where it goes, or drag it there — whichever you prefer.
-Right-click puts a piece back down. Everything works from the keyboard too:
+Click a piece and click where it goes, or drag it. Right-click puts it back
+down. The keyboard does everything too:
 
 | key | |
 |---|---|
 | arrows / `hjkl` | move the cursor |
-| `enter` / `space` | pick a piece up, or put it down |
+| `enter` / `space` | pick up, put down |
 | `f` | flip the board |
-| `p` | cycle piece style: octants, braille, sprites, big letters, art, figurines, letters |
-| `m` | turn mouse reporting off (see below) |
-| `c` | copy your share code, while you wait for an opponent |
-| `r` | resign (confirm with `y`) |
-| `d` | offer or accept a draw |
-| `q` / `esc` | leave the game, back to the lobby |
-| `ctrl-c` | quit |
+| `p` | cycle piece style |
+| `m` | hand the mouse back to your terminal |
+| `c` | copy your share code |
+| `r` / `d` | resign / offer a draw |
+| `q` / `esc` | leave (it asks first) |
 
-Promotion opens a prompt: click a piece, or `←`/`→` then `enter`, or press
+Promotion opens a prompt: click, or `←`/`→` and `enter`, or just press
 `q` `r` `b` `n`.
+
+Checkmate is not a status line. The board goes dark, the square flashes red,
+and the losing king topples over away from whatever mated it before the
+verdict is spelled out across the board. Resigning lays your king down gently
+instead. Any key puts the board back.
+
+## Friends
+
+Anyone you play turns up in the lobby under **friends**, and challenging one
+takes no code at all — their lobby just asks them to accept. Leaving a game
+drops you back with your last opponent already selected, so a rematch is one
+keypress. `x` forgets someone.
 
 ## Pieces
 
-The board sizes itself to your terminal, from 3x1 squares up to 11x5, and draws
-the best pieces the square can carry.
+The board sizes itself to your terminal, from 3x1 squares up to 11x5, and
+draws the best pieces the square can carry: vector silhouettes stamped dot by
+dot with Unicode octants, half-block sprites below that, then character art,
+figurines and plain letters. A sliding piece moves a dot at a time, not a cell
+at a time. If your terminal can't draw octants you'll see `�` — press `p` once
+for braille, which everything can draw.
 
-On squares of 9x4 and up the pieces are drawn with ratatui's `Canvas` widget,
-on a grid of two dots across and four down to each cell: 22x20 dots on the
-biggest board. Terminal cells are about twice as tall as they are wide, which
-makes the dots nearly square and lets the pieces keep their proportions. The
-pieces are vector silhouettes (circles, ellipses and polygons in a unit box,
-in `canvas.rs`) sampled at each dot, so the same drawing serves every square
-size, and a moving piece slides a dot at a time rather than a cell at a time.
-Where it passes over another piece, the two sets of dots are merged rather
-than one hiding the other.
+## How it finds your friend
 
-By default the dots are octants, which fill each dot in solid so a piece reads
-as one shape. Octants are new to Unicode (16.0), and a terminal that cannot
-draw them shows `�`; press `p` once for braille, the same dots drawn round with
-gaps between them, which every terminal can show. Ghostty, kitty, WezTerm and
-foot draw octants themselves, whatever the font.
+A code is a number and three words: about 40 bits, short enough to read out
+and far too many to guess at one try per connection.
 
-Every dot in a cell shares one colour, so each piece is one solid
-colour: white for white, near-black for black. A canvas also paints its whole area's background, which would wipe out the
-squares, so the pieces are drawn into a scratch buffer and only the cells with
-dots in them are copied onto the board.
+1. Both sides stretch the code with Argon2id into the same keypair. The host
+   signs a record naming its address and publishes it to the Mainline DHT —
+   BitTorrent's, millions of nodes, nobody's server. The joiner derives the
+   same key and looks it up.
+2. Both prove they hold the code with SPAKE2, bound to both endpoint ids. A
+   stranger gets one guess per connection, and three wrong ones and the host
+   stops listening.
+3. The host names its game, the joiner accepts or backs out.
 
-Below 9x4 there are too few dots to tell the pieces apart, so smaller squares
-use sprites instead.
+Codes expire after an hour, or the moment the host leaves.
 
-At 7x3 and above the other styles are proper sprites. Every cell is drawn as `▀`, whose
-foreground paints the top half and whose background paints the bottom, so each
-character holds two stacked pixels — a 9x4 square becomes a 9x8 bitmap. This
-needs nothing but truecolor, so it works in every terminal, with no image
-protocol to negotiate and no assets to ship. Both sides are outlined in
-near-black, with black's body lifted off its outline far enough that the outline
-still reads against it.
+There is no referee. Both sides run the same rules over their own copy of the
+position, so nobody has to trust the other's arithmetic.
 
-Sprites are drawn a size below their square (5x5, 7x7 and 9x8) and sunk towards
-the bottom, so a margin of board shows around each piece and pieces stand on
-their squares rather than filling them.
+## Hacking on it
 
-Half blocks stack two pixels in a cell and a cell carries two colours, so every
-sprite pixel lands exactly as drawn. Quadrants or sextants would divide the cell
-further, but an outline, a body and the square showing through are three colours
-and a cell can only hold two, so anywhere an edge runs diagonally the renderer
-would have to approximate. Real detail past this point means a terminal graphics
-protocol.
+`hub.rs` runs the loop and knows nothing about chess. `games/` holds the
+games, each one a `Play`: take keys, clicks and the opponent's lines, and
+draw. `session/` does pairing, `lobby/` is the first screen, `profile.rs`
+remembers who you are.
 
-There is also a big-letter style on the same pipeline: the piece's initial as a
-5x5 bitmap with a one-pixel border grown around it at draw time, which comes out
-7x7 — the same room the mid sprite takes, so the two can be compared side by
-side. The border closes up the counters of a letter that small, so the stroke
-has to carry the contrast against the border rather than against the square:
-black's stroke is lifted to a mid grey for that, while keeping the same
-near-black border the sprites use.
+Adding a game means a module under `games/`, a `Play` implementation and a
+line in `Kind`. Pairing, friends, invites and the lobby pick it up for free.
+`unsafe` is forbidden crate-wide, and release builds keep overflow checks on.
 
-Smaller squares fall back to three-row character art, then to figurines, then to
-letters. `p` cycles through them by hand: pick letters if your terminal renders
-the chess glyphs as double-width and the fallbacks look misaligned. Only sprites
-animate; the character styles just arrive.
-
-A move slides its piece across the board over 160ms, eased in and out. The
-travelling piece is drawn straight onto the buffer after the board, so it is not
-tied to the square grid and can sit halfway between two of them.
-
-Squares you can move to are marked with a dot, a shade darker than the square,
-and a capture has its corners filled in round a circle instead, since a ring
-would run through the piece. With octant pieces the marks are drawn in octants
-and come out round; otherwise they fall back to half blocks, which every
-terminal draws.
-
-While the mouse is captured, the terminal's own text selection is disabled, so
-you cannot drag-select text. If copying your share code with `c` did not
-work, press `m` to hand the mouse back (or hold shift, in most terminals),
-select it, and press `m` again.
-
-## How it works
-
-- **`session/`** — pairing, with nothing game-specific in it. [`iroh`] holds a
-  QUIC connection between the two players, hole-punching a direct link where
-  it can and falling back to a relay where it can't. Which game is played is
-  agreed in the handshake. See [Pairing](#pairing) below.
-- **`net.rs`** — a game's messages over a paired session. One bi-directional
-  stream carries newline-delimited text; what the lines say is up to the game.
-- **`games/`** — the games. Each implements `Play`: take keys, clicks and the
-  peer's lines, and draw. `Kind` lists them, and `Table` is the part every
-  game shares: the opponent, the connection and the share code.
-  - **`games/chess/`** — `rules.rs` holds the position and legality, with
-    [`shakmaty`] supplying move generation, so castling, en passant, promotion
-    and mate detection are handled properly. `app.rs` turns keys and messages
-    into state changes; `ui.rs` draws with [`ratatui`], reading state and
-    never writing it, and its `Geometry` is also what clicks are tested
-    against, so what you see and what you can click cannot drift apart.
-    `canvas.rs` draws the pieces, and `protocol.rs` is what the two sides say:
-    `move e2e4`, `resign`, `draw`.
-- **`lobby/`** — the first screen: the game, the menu, the code box with its
-  completion, and friends.
-- **`hub.rs`** — the main loop. It pairs players, answers invites, and hands
-  each game its input without knowing which game it is.
-- **`profile.rs`** — your identity, name and friends, kept between runs.
-- **`clipboard.rs`** — OSC 52, plus the platform's clipboard tool.
-- **`ui.rs`** — the palette and the few drawing helpers every screen uses.
-
-Adding a game means a module under `games/` with its own rules, screen and
-messages, a `Play` implementation, and a line in `Kind`. The lobby, pairing,
-friends and invites pick it up from there.
-
-The crate forbids `unsafe`, and release builds keep overflow checks on: a
-wrapped screen coordinate would quietly draw nonsense rather than fail, and
-nothing here is hot enough to notice the checks.
-
-There is no referee. Both peers run the same rules over their own copy of the
-position, and a move that does not check out locally is rejected rather than
-applied, so neither side has to trust the other's arithmetic.
-
-## Pairing
-
-A code is a number and three words from the BIP39 English list, which comes to
-about 40 bits: short enough to read out, too many to guess.
-
-1. **Rendezvous.** Both sides stretch the code with Argon2id (64 MiB) into the
-   same ed25519 keypair. The host signs a [pkarr] record with it, naming its
-   iroh endpoint, and publishes that to the Mainline DHT, BitTorrent's
-   network of millions of nodes. The joiner derives the same public key and
-   looks the record up. Nobody runs a server for this. Publishing and looking
-   up each take a few seconds; a joiner who arrives before the record has
-   spread keeps asking for a minute. The stretch is what keeps the codes
-   short: finding live games by walking the code space would mean doing it
-   for every possible code.
-2. **Handshake.** Once connected, the two sides run SPAKE2 with the code and
-   confirm the key they reached, bound to both endpoint ids. Someone without
-   the code gets one guess per connection, and the host stops listening after
-   three wrong ones.
-3. **Game.** The host names the game and version it is playing (`game chess 1`)
-   and the joiner accepts it or backs out, so every game shares one pairing
-   protocol.
-
-A code stops working an hour after it is published, or as soon as the host
-leaves the game it was for.
-
-### Friends
-
-Every player keeps one secret key, so their endpoint id stays the same from
-run to run. Pairing by code is how two players first learn each other's ids;
-from then on each can dial the other by id alone, and iroh's discovery finds
-the rest. iroh authenticates both ends of every connection, so an invite
-needs no code: the host sees who is really dialling, and only asks its player
-about friends it already has. Anyone else, or anyone who calls while a game is
-on, is turned away with a reason the other side can show (`busy`, `unknown`,
-`declined`).
-
-One endpoint serves the whole run, and one listener answers everything that
-dials it. What it does depends on where the player is: in the lobby it passes
-friends' invites on, while hosting it pairs by code, and during a game it
-turns everyone away.
-
-The profile lives in `tui-tui` under your config directory
-(the crate's name, not the command's)
-(`~/Library/Application Support` on macOS, `~/.config` on Linux), or in
-`$TUI_TUI_HOME` if set:
-
-- `identity.key` — the secret key, readable only by you
-- `profile.json` — your name and friends
-- `identity.lock` — held while running
-
-A second copy started while the first holds the lock runs as a guest, with a
-throwaway key and nothing saved, rather than answering to the same id. To run
-two players on one machine, give the second its own `TUI_TUI_HOME`.
+[DESIGN.md](DESIGN.md) has the long version: how the pieces are drawn, what
+the two sides say to each other, and how pairing works in detail.
 
 ## Tests
 
-`cargo test` covers the rules (castling's rook-square quirk, promotion,
-en passant, mate), checks that every square hit-tests correctly at four
-terminal sizes in both orientations along with the click and drag gestures,
-reads the sprites back out of a rendered buffer to confirm all six pieces are
-drawn and are told apart from each other, and stands up two real iroh endpoints
-in one process to play moves between them. The pairing tests check that codes
-parse the way people retype them, that a wrong code is refused and the host
-gives up after three, and that a joiner backs out of a game it does not have.
-The lobby tests cover the menu, typing and pasting codes, Tab completion,
-flagging bad words as they are typed, clicking items, friends, renaming and
-answering invites. The invite tests cover accepting, refusing, a busy player,
-an unknown game and a withdrawn invite; the profile tests cover the identity
-surviving a restart, the lock, the key's permissions, and saving friends. The
-games tests cover the registry, the seats and chess's messages, and one test
-draws and clicks every screen at every terminal size from nothing up to a
-maximised window, since a screen too small to hold a board is where the
+```
+cargo test                  # rules, hit-testing, drawing, two real endpoints talking
+cargo test -- --ignored     # pairing over the real DHT, needs the internet
+cargo run --example render  # prints the UI at several sizes, for layout work
+```
+
+One test draws and clicks every screen at every terminal size from 0x0 up to
+a maximised window, because a screen too small for a board is where the
 arithmetic gives out.
 
-`cargo test -- --ignored` also runs pairing over the real DHT, publishing a
-code and looking it up. It needs the internet and takes around ten seconds.
+## Licence
 
-`cargo run --example render` prints the UI at several sizes as plain text,
-which is the quickest way to iterate on layout.
-
-[`shakmaty`]: https://docs.rs/shakmaty
-[`iroh`]: https://docs.rs/iroh
-[pkarr]: https://pkarr.org
-[`ratatui`]: https://docs.rs/ratatui
+MIT or Apache-2.0, your pick.
