@@ -5,13 +5,25 @@ No server to run, no account, no port forwarding — one of you reads out a
 short code, the other types it in. Chess is the first game; pairing, friends
 and the lobby are shared, so more can join it.
 
+## Install
+
 ```
-cargo run --release                                 # the lobby
-cargo run --release -- host                         # or skip it: host a game,
-cargo run --release -- join 42-tiger-marble-ocean   # join one,
-cargo run --release -- local                        # or share a keyboard
-cargo run --release -- chess host                   # name the game, if you like
+cargo install --path .        # puts `tuitui` on your PATH
 ```
+
+## Use
+
+```
+tuitui                            # the lobby
+tuitui play chess                 # the lobby, on a game of your choosing
+tuitui host                       # or skip the lobby: host a game,
+tuitui join 42-tiger-marble-ocean # join one,
+tuitui local                      # or share a keyboard
+```
+
+Every command but `join` takes an optional game; without one you get the
+first, which is chess. Joining never names a game, since the host's code
+already says which it is. `tuitui --help` lists the lot.
 
 Anyone you have played turns up in the lobby under **friends**. Pick one to
 challenge them directly, with no code: their lobby asks them to accept.
@@ -25,7 +37,7 @@ code needs no choosing: you get whatever the host is playing.
 
 The lobby lets you host, join or share a keyboard. Hosting puts your code
 on the clipboard straight away; `c` copies it again. To join, type the code
-or paste it. Pasting the whole `tui-tui join ...` command works too. You can
+or paste it. Pasting the whole `tuitui join ...` command works too. You can
 also start typing the number from the menu. Tab finishes a word once only
 one word fits, and a word that is not in the list is flagged as you type.
 
@@ -218,6 +230,7 @@ friends' invites on, while hosting it pairs by code, and during a game it
 turns everyone away.
 
 The profile lives in `tui-tui` under your config directory
+(the crate's name, not the command's)
 (`~/Library/Application Support` on macOS, `~/.config` on Linux), or in
 `$TUI_TUI_HOME` if set:
 

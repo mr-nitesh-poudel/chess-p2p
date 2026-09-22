@@ -2,6 +2,20 @@
 name = "tui-tui"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.89"
+description = "Terminal games for two, played over a direct peer-to-peer connection"
+homepage = "https://github.com/mr-nitesh-poudel/tui-tui"
+repository = "https://github.com/mr-nitesh-poudel/tui-tui"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["tui", "chess", "peer-to-peer", "game", "terminal"]
+categories = ["games", "command-line-utilities"]
+exclude = ["examples/", "tests/", "target/"]
+
+# The crate keeps the dashes; the command people type does not.
+[[bin]]
+name = "tuitui"
+path = "src/main.rs"
 
 # No part of this needs raw memory or FFI, so nothing may reach for unsafe.
 [lints.rust]

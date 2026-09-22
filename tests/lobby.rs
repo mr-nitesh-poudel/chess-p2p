@@ -186,7 +186,7 @@ fn pasting_takes_the_code_or_the_whole_command() {
     for pasted in [
         "42-tiger-marble-ocean",
         "  42 Tiger Marble Ocean\n",
-        "tui-tui join 42-tiger-marble-ocean\n",
+        "tuitui join 42-tiger-marble-ocean\n",
     ] {
         let mut lobby = Lobby::new();
         lobby.on_paste(pasted);
