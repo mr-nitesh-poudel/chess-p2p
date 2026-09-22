@@ -168,6 +168,10 @@ Adding a game means a module under `games/` with its own rules, screen and
 messages, a `Play` implementation, and a line in `Kind`. The lobby, pairing,
 friends and invites pick it up from there.
 
+The crate forbids `unsafe`, and release builds keep overflow checks on: a
+wrapped screen coordinate would quietly draw nonsense rather than fail, and
+nothing here is hot enough to notice the checks.
+
 There is no referee. Both peers run the same rules over their own copy of the
 position, and a move that does not check out locally is rejected rather than
 applied, so neither side has to trust the other's arithmetic.
@@ -239,7 +243,11 @@ The lobby tests cover the menu, typing and pasting codes, Tab completion,
 flagging bad words as they are typed, clicking items, friends, renaming and
 answering invites. The invite tests cover accepting, refusing, a busy player,
 an unknown game and a withdrawn invite; the profile tests cover the identity
-surviving a restart, the lock, the key's permissions, and saving friends.
+surviving a restart, the lock, the key's permissions, and saving friends. The
+games tests cover the registry, the seats and chess's messages, and one test
+draws and clicks every screen at every terminal size from nothing up to a
+maximised window, since a screen too small to hold a board is where the
+arithmetic gives out.
 
 `cargo test -- --ignored` also runs pairing over the real DHT, publishing a
 code and looking it up. It needs the internet and takes around ten seconds.

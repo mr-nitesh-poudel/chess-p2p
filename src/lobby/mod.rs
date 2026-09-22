@@ -163,6 +163,11 @@ impl Lobby {
         Kind::ALL[self.game % Kind::ALL.len()]
     }
 
+    /// Whether the selection is on the game row, where the arrows change it.
+    pub fn on_game(&self) -> bool {
+        self.rows().get(self.selected) == Some(&Row::Item(Item::Game))
+    }
+
     /// Steps through the games, wrapping round at either end.
     fn next_game(&mut self, step: isize) {
         let n = Kind::ALL.len() as isize;
@@ -232,12 +237,8 @@ impl Lobby {
             KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
                 self.selected = (self.selected + 1) % rows.len();
             }
-            KeyCode::Left | KeyCode::Char('h') if rows[self.selected] == Row::Item(Item::Game) => {
-                self.next_game(-1);
-            }
-            KeyCode::Right | KeyCode::Char('l') if rows[self.selected] == Row::Item(Item::Game) => {
-                self.next_game(1);
-            }
+            KeyCode::Left | KeyCode::Char('h') if self.on_game() => self.next_game(-1),
+            KeyCode::Right | KeyCode::Char('l') if self.on_game() => self.next_game(1),
             KeyCode::Enter | KeyCode::Char(' ') => return self.activate(self.selected),
             KeyCode::Char('x') => {
                 if let Some(Row::Friend(i)) = rows.get(self.selected) {

@@ -3,6 +3,15 @@ name = "tui-tui"
 version = "0.1.0"
 edition = "2024"
 
+# No part of this needs raw memory or FFI, so nothing may reach for unsafe.
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+
 [dependencies]
 anyhow = "1.0.104"
 argon2 = "0.6.0"
@@ -18,6 +27,12 @@ serde_json = "1.0.151"
 shakmaty = "0.30.1"
 spake2 = { version = "0.4", features = ["getrandom"] }
 tokio = { version = "1.53.1", features = ["full"] }
+
+# Arithmetic that wraps is a bug here, not a shortcut: a wrapped screen
+# coordinate would quietly draw nonsense rather than fail. Checked in release
+# too, where it costs nothing this program will notice.
+[profile.release]
+overflow-checks = true
 
 # Stretching a code with Argon2 takes seconds unoptimised; tests do it a lot.
 [profile.dev.package.argon2]

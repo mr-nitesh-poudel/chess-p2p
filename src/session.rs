@@ -20,7 +20,7 @@ pub mod code;
 pub mod handshake;
 pub mod rendezvous;
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -348,21 +348,28 @@ impl Listener {
             match result {
                 Ok(()) => inner.emit(Incoming::Progress(Progress::Listed)),
                 Err(e) => {
-                    *inner.mode.lock().unwrap() = Mode::Busy;
+                    *lock(&inner.mode) = Mode::Busy;
                     inner.emit(Incoming::Closed(format!("{e:#}")));
                 }
             }
         });
-        *self.inner.publisher.lock().unwrap() = Some(publisher);
+        *lock(&self.inner.publisher) = Some(publisher);
     }
+}
+
+/// Takes a lock, poisoned or not. A panic while one is held would otherwise
+/// take every later lock with it, and what these guard is a mode and a task
+/// handle: there is no half-updated state to protect anyone from.
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 impl Inner {
     fn set(&self, mode: Mode) {
-        if let Some(publisher) = self.publisher.lock().unwrap().take() {
+        if let Some(publisher) = lock(&self.publisher).take() {
             publisher.abort();
         }
-        *self.mode.lock().unwrap() = mode;
+        *lock(&self.mode) = mode;
     }
 
     fn emit(&self, event: Incoming) {
@@ -370,7 +377,7 @@ impl Inner {
     }
 
     fn hosting(&self) -> Option<Hosting> {
-        match &*self.mode.lock().unwrap() {
+        match &*lock(&self.mode) {
             Mode::Hosting(h) => Some(h.clone()),
             _ => None,
         }
@@ -418,7 +425,7 @@ impl Inner {
         );
         let result = tokio::time::timeout(HANDSHAKE_TIMEOUT, shake).await;
 
-        let mut mode = self.mode.lock().unwrap();
+        let mut mode = lock(&self.mode);
         // Only count against, or hand over, the hosting this attempt was for:
         // the player may have moved on while it was in flight.
         let Mode::Hosting(current) = &mut *mode else {
@@ -472,7 +479,7 @@ impl Inner {
             handshake::refuse(&mut send, "unsupported-game").await;
             return Ok(());
         };
-        if !matches!(*self.mode.lock().unwrap(), Mode::Idle) {
+        if !matches!(*lock(&self.mode), Mode::Idle) {
             handshake::refuse(&mut send, "busy").await;
             return Ok(());
         }

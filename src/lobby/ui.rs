@@ -212,13 +212,14 @@ pub fn draw_lobby(f: &mut Frame, lobby: &Lobby) {
     match lobby.editing {
         Some(Field::Code) => set_cursor(f, g.input, PROMPT.len() + lobby.input.len()),
         Some(Field::Name) => {
-            let blurb = g.rows[lobby.selected];
-            let line = Rect {
-                y: blurb.y + 1,
-                height: 1,
-                ..blurb
-            };
-            set_cursor(f, line, 2 + lobby.name_input.chars().count());
+            if let Some(blurb) = g.rows.get(lobby.selected) {
+                let line = Rect {
+                    y: blurb.y + 1,
+                    height: 1,
+                    ..*blurb
+                };
+                set_cursor(f, line, 2 + lobby.name_input.chars().count());
+            }
         }
         None => {}
     }
@@ -249,7 +250,7 @@ pub fn draw_lobby(f: &mut Frame, lobby: &Lobby) {
     f.render_widget(Paragraph::new(hint), g.hint);
 
     let on_friend = matches!(rows.get(lobby.selected), Some(Row::Friend(_)));
-    let on_game = rows.get(lobby.selected) == Some(&Row::Item(Item::Game));
+    let on_game = lobby.on_game();
     let keys = if lobby.invite.is_some() {
         "y accept   n decline"
     } else if joining {
