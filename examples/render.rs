@@ -1,16 +1,16 @@
 //! Renders the UI to an in-memory terminal and prints it, so the layout can be
 //! checked without a human at a keyboard. `cargo run --example render`
 
-use chess_p2p::app::{App, Conn};
-use chess_p2p::clipboard::Copied;
-use chess_p2p::lobby::{Field, Lobby};
-use chess_p2p::profile::Contact;
-use chess_p2p::ui::{self, Geometry, PieceStyle};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::Color as Paint;
 use shakmaty::{Color, Square};
+use tui_tui::app::{App, Conn};
+use tui_tui::clipboard::Copied;
+use tui_tui::lobby::{Field, Lobby};
+use tui_tui::profile::Contact;
+use tui_tui::ui::{self, Geometry, PieceStyle};
 
 fn dump(label: &str, app: &App, w: u16, h: u16) {
     print_frame(label, w, h, |f| ui::draw(f, app));

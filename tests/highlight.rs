@@ -1,108 +1,104 @@
-//! The wash over squares you can move to. It is mixed here rather than by the
-//! terminal, which has no alpha channel, so it is worth checking it lands.
+//! The marks on squares you can move to: a dot on an empty square, the corners
+//! filled in on a capture. They are drawn into the cells over the square, so
+//! it is worth checking they land where they should and nowhere else.
 
-use chess_p2p::app::App;
-use chess_p2p::ui::{self, Geometry};
 use ratatui::Terminal;
+use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
-use ratatui::style::Color;
 use shakmaty::Square;
+use tui_tui::app::App;
+use tui_tui::ui::{self, Geometry, PieceStyle};
 
 const W: u16 = 120;
 const H: u16 = 40;
 
-/// The square's own colour, read from a corner cell that no piece reaches.
-fn square_colour(app: &App, sq: Square) -> (u16, u16, u16) {
+fn render(app: &App) -> Buffer {
     let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(W, H)).unwrap();
     terminal.draw(|f| ui::draw(f, app)).unwrap();
-    let buf = terminal.backend().buffer().clone();
+    terminal.backend().buffer().clone()
+}
+
+/// The cell `(dx, dy)` into a square, as seen from white's side.
+fn cell(buf: &Buffer, sq: Square, (dx, dy): (u16, u16)) -> Cell {
     let g = Geometry::new(Rect::new(0, 0, W, H));
     let (cw, ch) = g.cell;
     let col = u16::from(sq.file() as u8);
     let row = 7 - u16::from(sq.rank() as u8);
-
-    match buf[(g.grid.x + col * cw, g.grid.y + row * ch)].bg {
-        Color::Rgb(r, gr, b) => (r.into(), gr.into(), b.into()),
-        other => panic!("expected a true colour on {sq}, got {other:?}"),
-    }
+    buf[(g.grid.x + col * cw + dx, g.grid.y + row * ch + dy)].clone()
 }
 
-/// How far the colour leans green, against its strongest other channel.
-fn greenness(c: (u16, u16, u16)) -> i32 {
-    i32::from(c.1 as i16) - i32::from(c.0.max(c.2) as i16)
+fn middle() -> (u16, u16) {
+    let (cw, ch) = Geometry::new(Rect::new(0, 0, W, H)).cell;
+    (cw / 2, ch / 2)
 }
 
-#[test]
-fn reachable_squares_turn_green() {
+fn selecting(from: Square, moves: &[&str], style: PieceStyle) -> App {
     let mut app = App::local();
-    let plain_dark = square_colour(&app, Square::E3);
-    let plain_light = square_colour(&app, Square::E4);
-
-    app.game.cursor = Square::E2;
-    app.game.activate(None);
-
-    let lit_dark = square_colour(&app, Square::E3);
-    let lit_light = square_colour(&app, Square::E4);
-
-    assert!(greenness(lit_dark) > 12, "e3 is barely green: {lit_dark:?}");
-    assert!(
-        greenness(lit_light) > 12,
-        "e4 is barely green: {lit_light:?}"
-    );
-    assert!(greenness(lit_dark) > greenness(plain_dark) + 10);
-    assert!(greenness(lit_light) > greenness(plain_light) + 10);
-}
-
-#[test]
-fn the_wash_lets_the_board_show_through() {
-    let mut app = App::local();
-    app.game.cursor = Square::E2;
-    app.game.activate(None);
-
-    // e3 is a dark square and e4 a light one. If the wash replaced the colour
-    // outright they would come out identical.
-    assert_ne!(
-        square_colour(&app, Square::E3),
-        square_colour(&app, Square::E4),
-        "the wash should tint the square, not paint over it"
-    );
-}
-
-#[test]
-fn a_capture_is_marked_more_strongly_than_an_empty_square() {
-    let mut app = App::local();
-    for m in ["e2e4", "d7d5"] {
+    app.piece_style = style;
+    for m in moves {
         app.game.play_uci(m).unwrap();
     }
-    app.game.cursor = Square::E4;
+    app.game.cursor = from;
     app.game.activate(None);
+    // Out of the way, so the cursor's own highlight does not get in.
+    app.game.cursor = Square::H8;
+    app
+}
 
-    // Both d5 and e5 are light squares, so the two washes are comparable.
-    let capture = square_colour(&app, Square::D5);
-    let quiet = square_colour(&app, Square::E5);
+#[test]
+fn an_empty_square_you_can_reach_gets_a_dot_in_the_middle() {
+    for style in [PieceStyle::Octant, PieceStyle::Letter] {
+        let buf = render(&selecting(Square::E2, &[], style));
+        let dot = cell(&buf, Square::E4, middle());
+        assert_ne!(dot.symbol(), " ", "{style:?}: no dot on e4");
+        assert_ne!(dot.fg, dot.bg, "{style:?}: the dot must show");
+        assert_eq!(
+            cell(&buf, Square::E4, (0, 0)).symbol(),
+            " ",
+            "{style:?}: a dot stays off the edges"
+        );
+        assert_eq!(cell(&buf, Square::E5, middle()).symbol(), " ", "{style:?}");
+    }
+}
+
+#[test]
+fn half_blocks_stand_in_where_octants_may_not_draw() {
+    let buf = render(&selecting(Square::E2, &[], PieceStyle::Letter));
+    let dot = cell(&buf, Square::E4, middle());
     assert!(
-        greenness(capture) > greenness(quiet),
-        "capture {capture:?} should read stronger than quiet move {quiet:?}"
+        ["▀", "▄", "█"].contains(&dot.symbol()),
+        "{:?}",
+        dot.symbol()
     );
 }
 
 #[test]
-fn the_cursor_and_the_wash_stack() {
-    let mut app = App::local();
-    app.game.cursor = Square::E4;
-
-    // The same square, under the cursor both times: once reachable, once not.
+fn a_capture_fills_the_corners_and_leaves_the_piece() {
+    let mut app = selecting(Square::E4, &["e2e4", "d7d5"], PieceStyle::Octant);
+    let buf = render(&app);
     app.game.selected = None;
-    let cursor_only = square_colour(&app, Square::E4);
-    app.game.selected = Some(Square::E2);
-    let cursor_on_target = square_colour(&app, Square::E4);
+    let untouched = render(&app);
 
-    assert_ne!(
-        cursor_only, cursor_on_target,
-        "a reachable square under the cursor should not look like any other"
+    let (cw, ch) = Geometry::new(Rect::new(0, 0, W, H)).cell;
+    for corner in [(0, 0), (cw - 1, 0), (0, ch - 1), (cw - 1, ch - 1)] {
+        assert_ne!(cell(&buf, Square::D5, corner).symbol(), " ", "{corner:?}");
+    }
+    assert_eq!(
+        cell(&buf, Square::D5, middle()),
+        cell(&untouched, Square::D5, middle()),
+        "the captured piece is drawn as before"
     );
-    assert!(
-        greenness(cursor_on_target) > greenness(cursor_only) + 10,
-        "the green should survive the cursor: {cursor_on_target:?} vs {cursor_only:?}"
-    );
+}
+
+#[test]
+fn marking_a_square_leaves_its_colour_alone() {
+    let plain = render(&App::local());
+    let buf = render(&selecting(Square::E2, &[], PieceStyle::Octant));
+    for sq in [Square::E3, Square::E4] {
+        assert_eq!(
+            cell(&buf, sq, (0, 0)).bg,
+            cell(&plain, sq, (0, 0)).bg,
+            "{sq}"
+        );
+    }
 }

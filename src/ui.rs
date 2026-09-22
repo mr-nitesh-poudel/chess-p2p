@@ -23,9 +23,8 @@ const CURSOR: Color = Color::Rgb(246, 205, 82);
 const SELECTED: Color = Color::Rgb(124, 176, 95);
 const CAPTURE: Color = Color::Rgb(204, 96, 78);
 const MUTED: Color = Color::Rgb(128, 128, 128);
-/// Washed over a square you can move to, rather than replacing its colour, so
-/// the board underneath still reads.
-const TARGET: Color = Color::Rgb(106, 196, 84);
+/// How far the dot on a square you can move to darkens the square beneath.
+const MARK_SHADE: f32 = 0.22;
 /// A king in check or mated, and the verdict.
 const MATE_RED: Color = Color::Rgb(222, 52, 44);
 const NIGHT: Color = Color::Rgb(0, 0, 0);
@@ -76,6 +75,11 @@ const CELL_SIZES: [(u16, u16); 5] = [(3, 1), (5, 2), (7, 3), (9, 4), (11, 5)];
 /// Rank digit plus a space, down the left of the board.
 const GUTTER: u16 = 2;
 const SIDEBAR_MIN: u16 = 24;
+/// Past this the sidebar stops growing, and the room left over goes to
+/// either side of the board and sidebar instead.
+const SIDEBAR_MAX: u16 = 40;
+/// The fewest rows the sidebar needs: the status panel and a few moves.
+const SIDEBAR_MIN_H: u16 = 15;
 
 /// Where everything sits this frame.
 pub struct Geometry {
@@ -92,7 +96,9 @@ pub struct Geometry {
 }
 
 impl Geometry {
-    /// Picks the biggest board that leaves room for the sidebar.
+    /// Picks the biggest board that leaves room for the sidebar, and centres
+    /// it on the screen. The sidebar sits to its right, or pushes it left of
+    /// centre where there is not room for both.
     pub fn new(area: Rect) -> Self {
         let [main, footer] =
             Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
@@ -106,13 +112,30 @@ impl Geometry {
         }
         let (cw, ch) = cell;
 
-        let [left, sidebar] =
-            Layout::horizontal([Constraint::Length(block_w(cw)), Constraint::Min(0)]).areas(main);
-        let [top_tray, board, bottom_tray, _] = Layout::vertical([
+        // The board with a tray above and below it.
+        let (col_w, col_h) = (
+            block_w(cw).min(main.width),
+            (block_h(ch) + 2).min(main.height),
+        );
+        let spare = main.width - col_w;
+        let side_w = spare.min(SIDEBAR_MAX);
+        let left = Rect {
+            x: main.x + (spare / 2).min(spare - side_w),
+            y: main.y + (main.height - col_h) / 2,
+            width: col_w,
+            height: col_h,
+        };
+        let side_h = col_h.max(SIDEBAR_MIN_H).min(main.height);
+        let sidebar = Rect {
+            x: left.right(),
+            y: main.y + (main.height - side_h) / 2,
+            width: side_w,
+            height: side_h,
+        };
+        let [top_tray, board, bottom_tray] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Length(block_h(ch)),
             Constraint::Length(1),
-            Constraint::Min(0),
         ])
         .areas(left);
 
@@ -258,7 +281,7 @@ pub fn draw_lobby(f: &mut Frame, lobby: &Lobby) {
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(muted)
-        .title(Line::from(" chess-p2p ").centered());
+        .title(Line::from(" tui-tui ").centered());
     f.render_widget(block, g.panel);
 
     f.render_widget(
@@ -522,8 +545,6 @@ fn draw_board(f: &mut Frame, g: &Geometry, app: &App) {
                 } else {
                     game.piece_at(sq)
                 };
-                let is_target = targets.contains(&sq);
-
                 let dark = (file + rank) % 2 == 0;
                 let mut bg = match (dark, game.last.is_some_and(|(a, b)| a == sq || b == sq)) {
                     (true, false) => DARK,
@@ -531,17 +552,10 @@ fn draw_board(f: &mut Frame, g: &Geometry, app: &App) {
                     (true, true) => DARK_LAST,
                     (false, true) => LIGHT_LAST,
                 };
-                // Washes stack, so a square that is both reachable and under
-                // the cursor still shows that it is both.
-                if is_target {
-                    let strength = if piece.is_some() { 0.62 } else { 0.42 };
-                    bg = blend(bg, TARGET, strength);
-                }
                 if game.selected == Some(sq) {
                     bg = blend(bg, SELECTED, 0.8);
                 }
                 if sq == game.cursor {
-                    // Light enough that a green wash underneath still reads.
                     bg = blend(bg, CURSOR, 0.5);
                 }
                 if let Some((king, glow)) = check
@@ -603,6 +617,87 @@ fn draw_board(f: &mut Frame, g: &Geometry, app: &App) {
             }
         }
         canvas::stamp(f.buffer_mut(), g.grid, &pieces, dots);
+    }
+
+    let dots = (style == PieceStyle::Octant).then_some(Dots::Octant);
+    for sq in targets {
+        if travelling == Some(sq) {
+            continue;
+        }
+        let capture = game.piece_at(sq).is_some();
+        draw_mark(f.buffer_mut(), g, app.flipped, sq, capture, dots);
+    }
+}
+
+/// Marks a square the selected piece can move to: a dot in the middle of an
+/// empty square, or its corners filled in round a circle if there is a piece
+/// there to capture. A ring would run through the piece, which fills its
+/// square top to bottom; the corners are always free.
+///
+/// The mark is drawn in octants where the terminal has them and half blocks
+/// where it may not, a shade darker than the square. It leaves alone any cell
+/// a piece is already drawn in.
+fn draw_mark(
+    buf: &mut Buffer,
+    g: &Geometry,
+    flipped: bool,
+    sq: Square,
+    capture: bool,
+    dots: Option<Dots>,
+) {
+    let (cw, ch) = g.cell;
+    let (file, rank) = (sq.file() as u16, sq.rank() as u16);
+    let (col, row) = if flipped {
+        (7 - file, rank)
+    } else {
+        (file, 7 - rank)
+    };
+    let (sx, sy) = match dots {
+        Some(_) => canvas::DOTS,
+        None => (1, 2),
+    };
+
+    // Measured in cell widths, taking a cell to be twice as tall as it is
+    // wide, so the mark comes out round rather than squashed.
+    let (w, h) = (f64::from(cw), 2.0 * f64::from(ch));
+    let size = w.min(h);
+    let pixel = (1.0 / f64::from(sx)).max(2.0 / f64::from(sy));
+    let inside = |x: f64, y: f64| {
+        let d = (x - w / 2.0).hypot(y - h / 2.0);
+        if capture {
+            d >= 0.58 * size
+        } else {
+            d <= (0.18 * size).max(0.6 * pixel)
+        }
+    };
+
+    for cy in 0..ch {
+        for cx in 0..cw {
+            let at = (g.grid.x + col * cw + cx, g.grid.y + row * ch + cy);
+            if !buf.area.contains(at.into()) || buf[at].symbol() != " " {
+                continue;
+            }
+            let mut bits = 0u8;
+            for j in 0..sy {
+                for i in 0..sx {
+                    let x = f64::from(cx) + (f64::from(i) + 0.5) / f64::from(sx);
+                    let y = 2.0 * (f64::from(cy) + (f64::from(j) + 0.5) / f64::from(sy));
+                    if inside(x, y) {
+                        bits |= 1 << (i + sx * j);
+                    }
+                }
+            }
+            if bits == 0 {
+                continue;
+            }
+            let symbol = match dots {
+                Some(dots) => dots.encode(bits),
+                None => [' ', '▀', '▄', '█'][usize::from(bits)],
+            };
+            let cell = &mut buf[at];
+            let shade = blend(cell.bg, NIGHT, MARK_SHADE);
+            cell.set_char(symbol).set_fg(shade);
+        }
     }
 }
 
@@ -1298,21 +1393,28 @@ fn draw_moves(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
-    let keys = if app.game.promotion.is_some() {
-        "click a piece, or ←/→ and enter   esc cancel"
+    // A question waiting on an answer stands out from the usual key list.
+    let asking = Style::default().fg(CAPTURE).add_modifier(Modifier::BOLD);
+    let (keys, style) = if app.confirm_quit {
+        ("leave this game?   y leave   n stay", asking)
     } else if app.confirm_resign {
-        "y confirm resign   n cancel"
-    } else if area.width >= 92 {
+        ("resign this game?   y resign   n cancel", asking)
+    } else {
+        (footer_keys(app, area.width), Style::default().fg(MUTED))
+    };
+    f.render_widget(Paragraph::new(Line::styled(keys, style).centered()), area);
+}
+
+fn footer_keys(app: &App, width: u16) -> &'static str {
+    if app.game.promotion.is_some() {
+        "click a piece, or ←/→ and enter   esc cancel"
+    } else if width >= 92 {
         "click or drag to move   arrows/hjkl   f flip   p pieces   m mouse   r resign   d draw   q lobby"
-    } else if area.width >= 62 {
+    } else if width >= 62 {
         "click or drag   f flip   p pieces   r resign   d draw   q lobby"
     } else {
         "click to move   f flip   r resign   q lobby"
-    };
-    f.render_widget(
-        Paragraph::new(Line::styled(format!(" {keys}"), Style::default().fg(MUTED))),
-        area,
-    );
+    }
 }
 
 fn draw_promotion(f: &mut Frame, g: &Geometry, app: &App) {

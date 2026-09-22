@@ -42,7 +42,7 @@ use super::{Code, Game};
 
 pub type Reader = Lines<BufReader<RecvStream>>;
 
-const IDENTITY: &[u8] = b"chess-p2p/session/1";
+const IDENTITY: &[u8] = b"tui-tui/session/1";
 
 /// The peer used a different code. The host counts these; anything else going
 /// wrong mid-handshake is just a dropped attempt.

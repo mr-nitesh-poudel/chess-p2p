@@ -2,11 +2,11 @@
 
 use std::time::Duration;
 
-use chess_p2p::net::CHESS;
-use chess_p2p::session::{
+use iroh::SecretKey;
+use tui_tui::net::CHESS;
+use tui_tui::session::{
     self, Code, CodeError, Game, Incoming, Listener, Progress, Target, rendezvous,
 };
-use iroh::SecretKey;
 
 #[test]
 fn generated_codes_round_trip() {

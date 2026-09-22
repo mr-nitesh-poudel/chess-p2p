@@ -36,7 +36,7 @@ pub use handshake::{Declined, Reader, Refused, WrongCode};
 
 /// One protocol for every game: which one is being played is settled inside
 /// the handshake rather than by ALPN.
-pub const ALPN: &[u8] = b"chess-p2p/session/1";
+pub const ALPN: &[u8] = b"tui-tui/session/1";
 
 /// How long one attempt at the handshake may take before it is dropped.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);

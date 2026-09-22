@@ -1,10 +1,10 @@
 //! Click-to-square mapping, and the gestures built on top of it.
 
-use chess_p2p::app::App;
-use chess_p2p::ui::Geometry;
 use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 use shakmaty::{Role, Square};
+use tui_tui::app::App;
+use tui_tui::ui::Geometry;
 
 fn geometry(w: u16, h: u16) -> Geometry {
     Geometry::new(Rect::new(0, 0, w, h))

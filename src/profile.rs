@@ -1,6 +1,6 @@
 //! Who you are, and who you have played, kept between runs.
 //!
-//! The profile lives in one directory (`CHESS_P2P_HOME`, or `chess-p2p` under
+//! The profile lives in one directory (`TUI_TUI_HOME`, or `tui-tui` under
 //! the platform's config directory):
 //!
 //! - `identity.key` — the endpoint's secret key, readable only by you. Keeping
@@ -53,11 +53,11 @@ pub struct Profile {
 impl Profile {
     /// The profile in the usual place.
     pub fn load() -> Result<Self> {
-        let dir = match std::env::var_os("CHESS_P2P_HOME") {
+        let dir = match std::env::var_os("TUI_TUI_HOME") {
             Some(dir) => PathBuf::from(dir),
             None => dirs::config_dir()
                 .context("no config directory to keep your profile in")?
-                .join("chess-p2p"),
+                .join("tui-tui"),
         };
         Self::load_from(&dir)
     }

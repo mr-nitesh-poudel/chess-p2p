@@ -3,14 +3,14 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use chess_p2p::profile::{Profile, clean_name};
 use iroh::SecretKey;
+use tui_tui::profile::{Profile, clean_name};
 
 /// A fresh, empty profile directory for one test.
 fn dir() -> PathBuf {
     static N: AtomicU32 = AtomicU32::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "chess-p2p-test-{}-{}",
+        "tui-tui-test-{}-{}",
         std::process::id(),
         N.fetch_add(1, Ordering::Relaxed)
     ));

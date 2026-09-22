@@ -1,14 +1,14 @@
 //! Reads the canvas pieces back out of a rendered buffer, dot by dot, in
 //! both kinds of dot: octant and braille.
 
-use chess_p2p::app::App;
-use chess_p2p::canvas::Dots;
-use chess_p2p::ui::{self, Geometry, PieceStyle, canvas_colour};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use shakmaty::{Color, File, Rank, Role, Square};
+use tui_tui::app::App;
+use tui_tui::canvas::Dots;
+use tui_tui::ui::{self, Geometry, PieceStyle, canvas_colour};
 
 /// 11x5 squares.
 const BIG: (u16, u16) = (140, 52);

@@ -80,7 +80,8 @@ impl Dots {
         }
     }
 
-    fn encode(self, bits: u8) -> char {
+    /// The character that shows the dots in `bits`, numbered as in [`Dots::decode`].
+    pub fn encode(self, bits: u8) -> char {
         match self {
             Dots::Octant => OCTANTS[usize::from(bits)],
             Dots::Braille => {

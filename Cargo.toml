@@ -1,5 +1,5 @@
 [package]
-name = "chess-p2p"
+name = "tui-tui"
 version = "0.1.0"
 edition = "2024"
 

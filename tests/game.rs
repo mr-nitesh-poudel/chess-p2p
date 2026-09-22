@@ -2,7 +2,7 @@
 
 use shakmaty::{Color, Position, Role, Square};
 
-use chess_p2p::game::{Game, ui_to};
+use tui_tui::game::{Game, ui_to};
 
 /// Walk a game in through the same path a peer's moves take.
 fn play(g: &mut Game, moves: &[&str]) {

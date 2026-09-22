@@ -1,12 +1,12 @@
 //! Reads the half-block sprites back out of a rendered buffer. A piece that
 //! looks wrong on screen fails here.
 
-use chess_p2p::app::App;
-use chess_p2p::ui::{self, Geometry, PieceStyle, piece_ink};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use shakmaty::{Color, Role, Square};
+use tui_tui::app::App;
+use tui_tui::ui::{self, Geometry, PieceStyle, piece_ink};
 
 /// The pixel grid actually drawn for one square: `O` body, `#` outline,
 /// `.` the square showing through.

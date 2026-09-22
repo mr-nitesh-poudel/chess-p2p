@@ -22,7 +22,7 @@ use super::Code;
 
 /// Bumped if the derivation or the record ever change shape, so that old and
 /// new builds cannot find each other's records by accident.
-const SALT: &[u8] = b"chess-p2p rendezvous v1";
+const SALT: &[u8] = b"tui-tui rendezvous v1";
 
 /// The record's name under the code's key.
 const RECORD: &str = "_session";

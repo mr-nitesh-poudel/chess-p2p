@@ -136,6 +136,8 @@ pub struct App {
     /// Done with the program altogether.
     pub exit: bool,
     pub confirm_resign: bool,
+    /// Asked to leave a game still in play, and not yet sure.
+    pub confirm_quit: bool,
     /// The peer has offered a draw and we have not answered.
     pub draw_offered: bool,
     /// We have offered a draw and are waiting for an answer.
@@ -172,6 +174,7 @@ impl App {
             quit: false,
             exit: false,
             confirm_resign: false,
+            confirm_quit: false,
             draw_offered: false,
             draw_sent: false,
             draw_agreed: false,
@@ -491,6 +494,16 @@ impl App {
             }
             return;
         }
+        if self.confirm_quit {
+            // q again confirms, so a double tap still gets out quickly.
+            self.confirm_quit = false;
+            match key.code {
+                KeyCode::Char('y' | 'q') | KeyCode::Enter => self.quit = true,
+                KeyCode::Char('c') if ctrl => self.exit = true,
+                _ => {}
+            }
+            return;
+        }
         if self.confirm_resign {
             match key.code {
                 KeyCode::Char('y') => {
@@ -507,12 +520,12 @@ impl App {
 
         match key.code {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => self.exit = true,
-            KeyCode::Char('q') => self.quit = true,
+            KeyCode::Char('q') => self.leave(),
             KeyCode::Esc => {
                 if self.game.selected.is_some() {
                     self.game.selected = None;
                 } else {
-                    self.quit = true;
+                    self.leave();
                 }
             }
             KeyCode::Char('f') => self.flipped = !self.flipped,
@@ -527,6 +540,15 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => self.nudge(0, -1),
             KeyCode::Enter | KeyCode::Char(' ') => self.activate(),
             _ => {}
+        }
+    }
+
+    /// Back to the lobby, asking first if there is still a game to lose.
+    fn leave(&mut self) {
+        if self.game.over() || self.draw_agreed {
+            self.quit = true;
+        } else {
+            self.confirm_quit = true;
         }
     }
 
@@ -664,8 +686,9 @@ impl App {
             }
             return;
         }
-        if self.confirm_resign {
+        if self.confirm_resign || self.confirm_quit {
             self.confirm_resign = false;
+            self.confirm_quit = false;
             return;
         }
 

@@ -2,11 +2,11 @@
 
 use std::time::Duration;
 
-use chess_p2p::net::CHESS;
-use chess_p2p::session::{self, Game, Incoming, Invite, Link, Listener};
 use iroh::{Endpoint, SecretKey};
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 use tokio::task::JoinHandle;
+use tui_tui::net::CHESS;
+use tui_tui::session::{self, Game, Incoming, Invite, Link, Listener};
 
 async fn next<T>(rx: &mut UnboundedReceiver<T>, what: &str) -> T {
     tokio::time::timeout(Duration::from_secs(30), rx.recv())

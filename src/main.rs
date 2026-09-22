@@ -1,9 +1,9 @@
-//! chess-p2p — terminal chess over a direct peer-to-peer connection.
+//! tui-tui — terminal chess over a direct peer-to-peer connection.
 //!
-//!     chess-p2p              the lobby: host, join, challenge a friend
-//!     chess-p2p local        two players, one keyboard
-//!     chess-p2p host         wait for an opponent, play white
-//!     chess-p2p join <code>  join with an opponent's code, play black
+//!     tui-tui              the lobby: host, join, challenge a friend
+//!     tui-tui local        two players, one keyboard
+//!     tui-tui host         wait for an opponent, play white
+//!     tui-tui join <code>  join with an opponent's code, play black
 
 use std::time::Duration;
 
@@ -20,13 +20,13 @@ use shakmaty::Color;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::task::JoinHandle;
 
-use chess_p2p::app::{App, Conn};
-use chess_p2p::clipboard;
-use chess_p2p::lobby::{Choice, Lobby, Row};
-use chess_p2p::net::{self, CHESS, NetEvent};
-use chess_p2p::profile::Profile;
-use chess_p2p::session::{self, Code, Incoming, Invite, Link, Listener, Target};
-use chess_p2p::ui;
+use tui_tui::app::{App, Conn};
+use tui_tui::clipboard;
+use tui_tui::lobby::{Choice, Lobby, Row};
+use tui_tui::net::{self, CHESS, NetEvent};
+use tui_tui::profile::Profile;
+use tui_tui::session::{self, Code, Incoming, Invite, Link, Listener, Target};
+use tui_tui::ui;
 
 /// Roughly 60 frames a second while something is moving.
 const FRAME: Duration = Duration::from_millis(16);
@@ -35,17 +35,17 @@ const FRAME: Duration = Duration::from_millis(16);
 const SHUTDOWN: Duration = Duration::from_secs(2);
 
 const USAGE: &str = "\
-chess-p2p — terminal chess over iroh
+tui-tui — terminal chess over iroh
 
 usage:
-  chess-p2p                 open the lobby to host, join, or challenge a friend
-  chess-p2p local           play locally, two players on one keyboard
-  chess-p2p host            host a game and get a code to share
-  chess-p2p join <code>     join a game with the code your opponent sent,
-                            e.g. chess-p2p join 42-tiger-marble-ocean
+  tui-tui                 open the lobby to host, join, or challenge a friend
+  tui-tui local           play locally, two players on one keyboard
+  tui-tui host            host a game and get a code to share
+  tui-tui join <code>     join a game with the code your opponent sent,
+                          e.g. tui-tui join 42-tiger-marble-ocean
 
-Your profile (identity, name, friends) is kept in chess-p2p under your
-config directory, or in $CHESS_P2P_HOME if that is set.
+Your profile (identity, name, friends) is kept in tui-tui under your
+config directory, or in $TUI_TUI_HOME if that is set.
 ";
 
 #[tokio::main]

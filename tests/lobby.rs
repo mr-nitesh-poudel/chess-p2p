@@ -1,15 +1,15 @@
 //! The lobby: the menu, typing a code in, friends, and invites.
 
-use chess_p2p::app::{App, Conn};
-use chess_p2p::lobby::{Choice, Entry, FRIENDS_SHOWN, Field, Item, Lobby, Row};
-use chess_p2p::profile::Contact;
-use chess_p2p::session::Code;
-use chess_p2p::ui::LobbyGeometry;
 use iroh::SecretKey;
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::Rect;
+use tui_tui::app::{App, Conn};
+use tui_tui::lobby::{Choice, Entry, FRIENDS_SHOWN, Field, Item, Lobby, Row};
+use tui_tui::profile::Contact;
+use tui_tui::session::Code;
+use tui_tui::ui::LobbyGeometry;
 
 fn key(lobby: &mut Lobby, code: KeyCode) -> Option<Choice> {
     lobby.on_key(KeyEvent::new(code, KeyModifiers::NONE))
@@ -154,7 +154,7 @@ fn pasting_takes_the_code_or_the_whole_command() {
     for pasted in [
         "42-tiger-marble-ocean",
         "  42 Tiger Marble Ocean\n",
-        "chess-p2p join 42-tiger-marble-ocean\n",
+        "tui-tui join 42-tiger-marble-ocean\n",
     ] {
         let mut lobby = Lobby::new();
         lobby.on_paste(pasted);

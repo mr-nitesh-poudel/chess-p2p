@@ -1,4 +1,4 @@
-# chess-p2p
+# tui-tui
 
 Terminal chess for two people, played over a direct peer-to-peer connection.
 No server to run, no account, no port forwarding — one of you reads out a
@@ -19,7 +19,7 @@ already selected, so a rematch is one keypress away. `x` forgets a friend, and
 
 The lobby lets you host, join or share a keyboard. Hosting puts your code
 on the clipboard straight away; `c` copies it again. To join, type the code
-or paste it. Pasting the whole `chess-p2p join ...` command works too. You can
+or paste it. Pasting the whole `tui-tui join ...` command works too. You can
 also start typing the number from the menu. Tab finishes a word once only
 one word fits, and a word that is not in the list is flagged as you type.
 
@@ -196,9 +196,9 @@ dials it. What it does depends on where the player is: in the lobby it passes
 friends' invites on, while hosting it pairs by code, and during a game it
 turns everyone away.
 
-The profile lives in `chess-p2p` under your config directory
+The profile lives in `tui-tui` under your config directory
 (`~/Library/Application Support` on macOS, `~/.config` on Linux), or in
-`$CHESS_P2P_HOME` if set:
+`$TUI_TUI_HOME` if set:
 
 - `identity.key` — the secret key, readable only by you
 - `profile.json` — your name and friends
@@ -206,7 +206,7 @@ The profile lives in `chess-p2p` under your config directory
 
 A second copy started while the first holds the lock runs as a guest, with a
 throwaway key and nothing saved, rather than answering to the same id. To run
-two players on one machine, give the second its own `CHESS_P2P_HOME`.
+two players on one machine, give the second its own `TUI_TUI_HOME`.
 
 ## Tests
 
