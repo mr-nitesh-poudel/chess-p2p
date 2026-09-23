@@ -37,6 +37,12 @@ first game; the lobby, pairing and friends are shared, so more can follow.
 brew install mr-nitesh-poudel/tap/tuitui
 ```
 
+No Homebrew? A prebuilt binary for macOS and Linux:
+
+```
+curl -LsSf https://github.com/mr-nitesh-poudel/tui-tui/releases/latest/download/tui-tui-installer.sh | sh
+```
+
 Or from a clone, with `cargo install --path .`.
 
 ## Play
