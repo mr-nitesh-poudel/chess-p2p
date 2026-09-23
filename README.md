@@ -34,8 +34,10 @@ first game; the lobby, pairing and friends are shared, so more can follow.
 ## Install
 
 ```
-cargo install --path .    # puts `tuitui` on your PATH
+brew install mr-nitesh-poudel/tap/tuitui
 ```
+
+Or from a clone, with `cargo install --path .`.
 
 ## Play
 
