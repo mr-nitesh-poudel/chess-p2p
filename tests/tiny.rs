@@ -6,7 +6,7 @@ use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEven
 use ratatui::layout::Rect;
 use tui_tui::games::chess::App;
 use tui_tui::games::chess::ui::PieceStyle;
-use tui_tui::games::{Conn, Kind, Play, Seat, Table};
+use tui_tui::games::{Conn, Ctx, Seat, Table};
 use tui_tui::lobby::{self, Field, Invited, Lobby};
 
 /// Every small size, where the arithmetic is tightest, then a spread of
@@ -46,37 +46,37 @@ const GESTURES: [MouseEventKind; 4] = [
     MouseEventKind::Down(MouseButton::Right),
 ];
 
-fn games() -> Vec<(&'static str, App)> {
+fn games() -> Vec<(&'static str, Table<App>)> {
     let mut out = vec![];
     for style in std::iter::successors(Some(PieceStyle::Octant), |s| Some(s.next())).take(7) {
-        let mut app = App::local();
-        app.piece_style = style;
-        app.game.cursor = shakmaty::Square::E2;
-        app.game.activate(None);
+        let mut app = Table::local(App::local());
+        app.play.piece_style = style;
+        app.play.game.cursor = shakmaty::Square::E2;
+        app.play.game.activate(None);
         out.push(("selected", app));
     }
-    let mut mated = App::local();
+    let mut mated = Table::local(App::local());
     for m in ["f2f3", "e7e5", "g2g4", "d8h4"] {
-        mated.game.play_uci(m).unwrap();
+        mated.play.game.play_uci(m).unwrap();
     }
-    mated.ended = Some(std::time::Instant::now() - std::time::Duration::from_secs(10));
+    mated.play.ended = Some(std::time::Instant::now() - std::time::Duration::from_secs(10));
     out.push(("mated", mated));
-    let mut promo = App::local();
+    let mut promo = Table::local(App::local());
     for m in [
         "a2a4", "b7b5", "a4b5", "a7a6", "b5a6", "c8b7", "a6a7", "b7c6",
     ] {
-        promo.game.play_uci(m).unwrap();
+        promo.play.game.play_uci(m).unwrap();
     }
-    promo.game.cursor = shakmaty::Square::A7;
-    promo.game.activate(None);
-    promo.game.cursor = shakmaty::Square::B8;
-    promo.game.activate(None);
+    promo.play.game.cursor = shakmaty::Square::A7;
+    promo.play.game.activate(None);
+    promo.play.game.cursor = shakmaty::Square::B8;
+    promo.play.game.activate(None);
     out.push(("promoting", promo));
-    let mut hosting = App::new(Seat::Host, Table::new(Conn::Waiting, None));
-    hosting.table.share = Some("42-tiger-marble-ocean".into());
+    let mut hosting = Table::new(Ctx::new(Conn::Waiting, None), App::new(Seat::Host));
+    hosting.ctx.share = Some("42-tiger-marble-ocean".into());
     out.push(("hosting", hosting));
-    let mut quitting = App::local();
-    quitting.confirm_quit = true;
+    let mut quitting = Table::local(App::local());
+    quitting.ctx.confirm_leave = true;
     out.push(("quitting", quitting));
     out
 }
@@ -102,7 +102,7 @@ fn lobbies_draw_at_any_size() {
     let mut invited = Lobby::new();
     invited.invite = Some(Invited {
         name: "a very long name".into(),
-        game: Kind::Chess,
+        game: tui_tui::games::chess::KIND,
     });
     let mut typing = Lobby::new();
     typing.editing = Some(Field::Code);

@@ -6,15 +6,16 @@ use ratatui::Terminal;
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
 use shakmaty::Square;
+use tui_tui::games::Table;
 use tui_tui::games::chess::app::App;
-use tui_tui::games::chess::ui::{self, Geometry, PieceStyle};
+use tui_tui::games::chess::ui::{Geometry, PieceStyle};
 
 const W: u16 = 120;
 const H: u16 = 40;
 
-fn render(app: &App) -> Buffer {
+fn render(app: &Table<App>) -> Buffer {
     let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(W, H)).unwrap();
-    terminal.draw(|f| ui::draw(f, app)).unwrap();
+    terminal.draw(|f| app.draw(f)).unwrap();
     terminal.backend().buffer().clone()
 }
 
@@ -32,16 +33,16 @@ fn middle() -> (u16, u16) {
     (cw / 2, ch / 2)
 }
 
-fn selecting(from: Square, moves: &[&str], style: PieceStyle) -> App {
-    let mut app = App::local();
-    app.piece_style = style;
+fn selecting(from: Square, moves: &[&str], style: PieceStyle) -> Table<App> {
+    let mut app = Table::local(App::local());
+    app.play.piece_style = style;
     for m in moves {
-        app.game.play_uci(m).unwrap();
+        app.play.game.play_uci(m).unwrap();
     }
-    app.game.cursor = from;
-    app.game.activate(None);
+    app.play.game.cursor = from;
+    app.play.game.activate(None);
     // Out of the way, so the cursor's own highlight does not get in.
-    app.game.cursor = Square::H8;
+    app.play.game.cursor = Square::H8;
     app
 }
 
@@ -76,7 +77,7 @@ fn half_blocks_stand_in_where_octants_may_not_draw() {
 fn a_capture_fills_the_corners_and_leaves_the_piece() {
     let mut app = selecting(Square::E4, &["e2e4", "d7d5"], PieceStyle::Octant);
     let buf = render(&app);
-    app.game.selected = None;
+    app.play.game.selected = None;
     let untouched = render(&app);
 
     let (cw, ch) = Geometry::new(Rect::new(0, 0, W, H)).cell;
@@ -92,7 +93,7 @@ fn a_capture_fills_the_corners_and_leaves_the_piece() {
 
 #[test]
 fn marking_a_square_leaves_its_colour_alone() {
-    let plain = render(&App::local());
+    let plain = render(&Table::local(App::local()));
     let buf = render(&selecting(Square::E2, &[], PieceStyle::Octant));
     for sq in [Square::E3, Square::E4] {
         assert_eq!(

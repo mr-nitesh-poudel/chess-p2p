@@ -6,7 +6,7 @@ use ratatui::crossterm::event::{
 };
 use ratatui::layout::Rect;
 use tui_tui::games::chess::App;
-use tui_tui::games::{Conn, Kind};
+use tui_tui::games::{Conn, Kind, Table};
 use tui_tui::lobby::LobbyGeometry;
 use tui_tui::lobby::{Choice, Entry, FRIENDS_SHOWN, Field, Invited, Item, Lobby, Row};
 use tui_tui::profile::Contact;
@@ -74,7 +74,7 @@ fn the_game_comes_first_and_changes_in_place() {
     let mut lobby = Lobby::new();
     assert_eq!(lobby.rows()[0], Row::Item(Item::Game));
     assert_eq!(lobby.rows()[lobby.selected], Row::Item(Item::Host));
-    assert_eq!(lobby.game(), Kind::ALL[0]);
+    assert_eq!(lobby.game(), Kind::DEFAULT);
 
     key(&mut lobby, KeyCode::Up);
     for code in [KeyCode::Right, KeyCode::Left, KeyCode::Enter] {
@@ -85,7 +85,7 @@ fn the_game_comes_first_and_changes_in_place() {
     for _ in 0..Kind::ALL.len() {
         key(&mut lobby, KeyCode::Right);
     }
-    assert_eq!(lobby.game(), Kind::ALL[0]);
+    assert_eq!(lobby.game(), Kind::DEFAULT);
 }
 
 #[test]
@@ -334,7 +334,7 @@ fn renaming_edits_in_place() {
 fn alice_invites() -> Invited {
     Invited {
         name: "alice".into(),
-        game: Kind::Chess,
+        game: tui_tui::games::chess::KIND,
     }
 }
 
@@ -358,25 +358,22 @@ fn an_invite_is_answered_before_anything_else() {
 
 #[test]
 fn c_copies_the_code_only_while_it_is_needed() {
-    let mut app = App::local();
-    app.table.share = Some("42-tiger-marble-ocean".into());
+    let mut app = Table::local(App::local());
+    app.ctx.share = Some("42-tiger-marble-ocean".into());
     let c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE);
 
     app.on_key(c);
-    assert_eq!(
-        app.table.copy_request, None,
-        "hot-seat has nothing to share"
-    );
+    assert_eq!(app.ctx.copy_request, None, "hot-seat has nothing to share");
 
-    app.table.conn = Conn::Waiting;
+    app.ctx.conn = Conn::Waiting;
     app.on_key(c);
     assert_eq!(
-        app.table.copy_request.as_deref(),
+        app.ctx.copy_request.as_deref(),
         Some("42-tiger-marble-ocean")
     );
 
-    app.table.copy_request = None;
-    app.table.conn = Conn::Playing;
+    app.ctx.copy_request = None;
+    app.ctx.conn = Conn::Playing;
     app.on_key(c);
-    assert_eq!(app.table.copy_request, None, "the opponent is already in");
+    assert_eq!(app.ctx.copy_request, None, "the opponent is already in");
 }

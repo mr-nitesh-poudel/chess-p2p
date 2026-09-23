@@ -25,13 +25,15 @@ impl Msg {
         }
     }
 
-    /// `None` for anything unknown, which is ignored so the protocol can grow.
+    /// `None` for anything unknown, which is ignored so the protocol can grow,
+    /// and for anything malformed. The match is exact: `resign` with words
+    /// after it is not a resignation, and a move is one word, not zero or two.
     pub fn parse(line: &str) -> Option<Msg> {
         let (word, rest) = line.split_once(' ').unwrap_or((line, ""));
-        match word {
-            "move" => Some(Msg::Move(rest.to_string())),
-            "resign" => Some(Msg::Resign),
-            "draw" => Some(Msg::Draw),
+        match (word, rest) {
+            ("move", uci) if !uci.is_empty() && !uci.contains(' ') => Some(Msg::Move(uci.into())),
+            ("resign", "") => Some(Msg::Resign),
+            ("draw", "") => Some(Msg::Draw),
             _ => None,
         }
     }

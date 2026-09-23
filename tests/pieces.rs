@@ -5,19 +5,20 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use shakmaty::{Color, Role, Square};
+use tui_tui::games::Table;
 use tui_tui::games::chess::app::App;
-use tui_tui::games::chess::ui::{self, Geometry, PieceStyle, piece_ink};
+use tui_tui::games::chess::ui::{Geometry, PieceStyle, piece_ink};
 
 /// The pixel grid actually drawn for one square: `O` body, `#` outline,
 /// `.` the square showing through.
-fn silhouette(app: &App, w: u16, h: u16, sq: Square, side: Color) -> Vec<String> {
+fn silhouette(app: &Table<App>, w: u16, h: u16, sq: Square, side: Color) -> Vec<String> {
     let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
-    terminal.draw(|f| ui::draw(f, app)).unwrap();
+    terminal.draw(|f| app.draw(f)).unwrap();
     let buf = terminal.backend().buffer().clone();
 
     let g = Geometry::new(Rect::new(0, 0, w, h));
     let (cw, ch) = g.cell;
-    let (fill, line) = piece_ink(app.piece_style, side);
+    let (fill, line) = piece_ink(app.play.piece_style, side);
     let col = u16::from(sq.file() as u8);
     let row = 7 - u16::from(sq.rank() as u8);
 
@@ -50,9 +51,9 @@ fn silhouette(app: &App, w: u16, h: u16, sq: Square, side: Color) -> Vec<String>
 }
 
 /// An app drawing half-block sprites, which braille would otherwise replace.
-fn sprites() -> App {
-    let mut app = App::local();
-    app.piece_style = PieceStyle::Blocks;
+fn sprites() -> Table<App> {
+    let mut app = Table::local(App::local());
+    app.play.piece_style = PieceStyle::Blocks;
     app
 }
 
@@ -137,7 +138,7 @@ fn small_squares_fall_back_instead_of_going_blank() {
 
     // Something must still be on the square, just not made of half blocks.
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    terminal.draw(|f| ui::draw(f, &app)).unwrap();
+    terminal.draw(|f| app.draw(f)).unwrap();
     let buf = terminal.backend().buffer().clone();
     let g = Geometry::new(Rect::new(0, 0, 80, 24));
     let (cw, ch) = g.cell;
@@ -182,8 +183,8 @@ fn both_sides_are_outlined_in_near_black() {
 
 #[test]
 fn big_letters_are_drawn_and_told_apart() {
-    let mut app = App::local();
-    app.piece_style = PieceStyle::BigLetter;
+    let mut app = Table::local(App::local());
+    app.play.piece_style = PieceStyle::BigLetter;
 
     let drawn: Vec<(Role, Vec<String>)> = all_roles(Color::White)
         .into_iter()
@@ -233,10 +234,10 @@ fn a_black_letter_reads_against_its_border() {
 #[test]
 fn big_letters_fall_back_on_a_small_square() {
     // 80x24 gives 5x2 squares: too small for the 7x7 outlined letter.
-    let mut app = App::local();
-    app.piece_style = PieceStyle::BigLetter;
+    let mut app = Table::local(App::local());
+    app.play.piece_style = PieceStyle::BigLetter;
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    terminal.draw(|f| ui::draw(f, &app)).unwrap();
+    terminal.draw(|f| app.draw(f)).unwrap();
     let buf = terminal.backend().buffer().clone();
 
     let g = Geometry::new(Rect::new(0, 0, 80, 24));

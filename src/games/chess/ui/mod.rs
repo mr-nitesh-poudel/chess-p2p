@@ -1,5 +1,5 @@
-//! Drawing a game of chess: the board and its pieces ([`board`], [`pieces`]),
-//! the panels around it ([`panels`]), and the geometry that mouse clicks are
+//! Drawing a game of chess: the board and its pieces (`board`, `pieces`),
+//! the panels around it (`panels`), and the geometry that mouse clicks are
 //! tested against.
 //!
 //! What is drawn and what can be clicked both come from [`Geometry`], so the
@@ -19,6 +19,7 @@ use panels::{draw_footer, draw_promotion, draw_sidebar, draw_tray, draw_verdict}
 
 use super::app::App;
 use super::rules::PROMOTION_ROLES;
+use crate::games::Ctx;
 use crate::ui::centred;
 
 pub use board::canvas_colour;
@@ -205,7 +206,7 @@ fn block_h(cell_h: u16) -> u16 {
     8 * cell_h + 1 + 2
 }
 
-pub fn draw(f: &mut Frame, app: &App) {
+pub fn draw(f: &mut Frame, app: &App, ctx: &Ctx) {
     let g = Geometry::new(f.area());
 
     let bottom_side = if app.flipped {
@@ -219,8 +220,8 @@ pub fn draw(f: &mut Frame, app: &App) {
         draw_slide(f.buffer_mut(), &g, app, slide, t);
     }
     draw_tray(f, g.bottom_tray, app, bottom_side);
-    draw_sidebar(f, g.sidebar, app);
-    draw_footer(f, g.footer, app);
+    draw_sidebar(f, g.sidebar, app, ctx);
+    draw_footer(f, g.footer, app, ctx);
 
     if app.game.promotion.is_some() {
         draw_promotion(f, &g, app);
@@ -228,7 +229,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     if let Some(fin) = app.finale()
         && let Some(reveal) = fin.banner
     {
-        draw_verdict(f, &g, app, &fin, reveal);
+        draw_verdict(f, &g, app, ctx, &fin, reveal);
     }
 }
 

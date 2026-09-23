@@ -13,10 +13,19 @@ other. Written for whoever works on this next, including me in six months.
 - **`net.rs`** — a game's messages over a paired session. One bi-directional
   stream carries newline-delimited text; what the lines say is up to the game,
   and the only word reserved here is `bye`.
-- **`games/`** — the games. Each implements `Play`: take keys, clicks and the
-  peer's lines, and draw. `Kind` lists them, `Seat` says who goes first, and
-  `Table` is the part every game shares: the opponent, the connection and the
-  share code.
+- **`games/`** — the games, and the table each is played at.
+  - `Play` is what a game implements: its own keys, clicks and drawing, and
+    the opponent's lines. It says whether it used a key; the ones it didn't
+    fall through to the table.
+  - `Table` is the shell every game sits in. It owns the connection (`Ctx`),
+    and the things every game shares: `q`/`esc` to leave, asking first if the
+    game is still in play; `m` for the mouse; `c` to copy the share code;
+    Ctrl-C, which always quits and never reaches a game. The main loop holds
+    a `Box<Table<dyn Play>>` and never learns which game is on it.
+  - `chrome.rs` draws what every game's screen shares: the connection status
+    and the footer, with the table's own questions in it.
+  - `Kind` is the registry: each game supplies a `Descriptor` (name, wire id,
+    how to start one) and takes one line in `Kind::ALL`.
   - **`games/chess/`** — `rules.rs` holds the position and legality, with
     [`shakmaty`] supplying move generation, so castling, en passant, promotion
     and mate detection are handled properly. `app.rs` turns keys and messages
@@ -33,9 +42,12 @@ other. Written for whoever works on this next, including me in six months.
 - **`clipboard.rs`** — OSC 52, plus the platform's clipboard tool.
 - **`ui.rs`** — the palette and the few drawing helpers every screen uses.
 
-Adding a game means a module under `games/` with its own rules, screen and
-messages, a `Play` implementation, and a line in `Kind`. The lobby, pairing,
-friends and invites pick it up from there.
+Adding a game means a module under `games/` with a type that implements
+`Play`, a `Descriptor`, and a line in `Kind::ALL`. The lobby, the command
+line, pairing, friends and invites pick it up from there. `games/mod.rs`
+spells out what a game can rely on from the table and what it must do in
+return; `tests/table.rs` runs a toy game through the table to prove none of
+it depends on chess.
 
 A game's `Geometry` decides what is drawn *and* what a click hits, so the two
 cannot drift apart.
@@ -45,8 +57,19 @@ wrapped screen coordinate would quietly draw nonsense rather than fail, and
 nothing here is hot enough to notice the checks.
 
 There is no referee. Both peers run the same rules over their own copy of the
-position, and a move that does not check out locally is rejected rather than
-applied, so neither side has to trust the other's arithmetic.
+game, and nothing the peer sends is taken on trust:
+
+- **Lines are bounded.** A peer's line is read at most 4 KiB at a time
+  (`session/lines.rs`). Without that, anyone who can dial us — in the lobby,
+  anyone who knows our endpoint id, before proving anything — could send one
+  endless line and exhaust our memory.
+- **Names are cleaned where they arrive** (`session/name.rs`): no control
+  characters, 24 characters at most.
+- **A game checks every message against its own state.** In chess, a move is
+  refused unless it is the peer's turn — the rules alone would happily play a
+  legal move for *our* side — and a finished game takes no more messages, so
+  a late `resign` cannot overturn a checkmate. Messages are matched exactly:
+  `resign please` is not a resignation.
 
 ## Pieces
 

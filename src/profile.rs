@@ -21,7 +21,7 @@ use anyhow::{Context, Result, bail};
 use iroh::{EndpointId, SecretKey};
 use serde::{Deserialize, Serialize};
 
-const NAME_MAX: usize = 24;
+pub use crate::session::name::clean_name;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Contact {
@@ -200,25 +200,6 @@ fn decode_hex32(s: &str) -> Option<[u8; 32]> {
         *byte = u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok()?;
     }
     Some(out)
-}
-
-/// A name as it will be shown to others: one line, no control characters,
-/// and short enough to fit the sidebar.
-pub fn clean_name(name: &str) -> Option<String> {
-    let cleaned: String = name
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .take(NAME_MAX)
-        .collect();
-    cleaned
-        .chars()
-        .any(char::is_alphanumeric)
-        .then(|| cleaned.trim().to_string())
 }
 
 fn default_name() -> String {

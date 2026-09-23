@@ -7,14 +7,14 @@ use ratatui::layout::Rect;
 use ratatui::style::Color as Paint;
 use shakmaty::{Color, Square};
 use tui_tui::clipboard::Copied;
-use tui_tui::games::Conn;
 use tui_tui::games::chess::App;
-use tui_tui::games::chess::ui::{self, Geometry, PieceStyle};
+use tui_tui::games::chess::ui::{Geometry, PieceStyle};
+use tui_tui::games::{Conn, Table};
 use tui_tui::lobby::{self, Field, Invited, Lobby};
 use tui_tui::profile::Contact;
 
-fn dump(label: &str, app: &App, w: u16, h: u16) {
-    print_frame(label, w, h, |f| ui::draw(f, app));
+fn dump(label: &str, app: &Table<App>, w: u16, h: u16) {
+    print_frame(label, w, h, |f| app.draw(f));
 }
 
 fn friend(name: &str, games: u32, last_played: u64) -> Contact {
@@ -44,9 +44,9 @@ fn print_frame(label: &str, w: u16, h: u16, draw: impl FnOnce(&mut ratatui::Fram
 
 /// Reads the half-block sprites back out of the rendered buffer, so what is
 /// printed here is what the terminal was actually told to draw.
-fn sprites(app: &App, w: u16, h: u16, squares: &[Square]) {
+fn sprites(app: &Table<App>, w: u16, h: u16, squares: &[Square]) {
     let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
-    terminal.draw(|f| ui::draw(f, app)).unwrap();
+    terminal.draw(|f| app.draw(f)).unwrap();
     let buf = terminal.backend().buffer().clone();
     let g = Geometry::new(Rect::new(0, 0, w, h));
     let (cw, ch) = g.cell;
@@ -87,14 +87,14 @@ fn sprites(app: &App, w: u16, h: u16, squares: &[Square]) {
 }
 
 fn main() {
-    let mut app = App::local();
+    let mut app = Table::local(App::local());
     for m in [
         "e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "g8f6", "e1g1", "f6e4",
     ] {
-        app.game.play_uci(m).unwrap();
+        app.play.game.play_uci(m).unwrap();
     }
-    app.game.cursor = Square::D2;
-    app.game.activate(None);
+    app.play.game.cursor = Square::D2;
+    app.play.game.activate(None);
 
     let back = [
         Square::A1,
@@ -105,24 +105,24 @@ fn main() {
         Square::F1,
         Square::A2,
     ];
-    sprites(&App::local(), 120, 40, &back);
-    sprites(&App::local(), 100, 30, &back);
+    sprites(&Table::local(App::local()), 120, 40, &back);
+    sprites(&Table::local(App::local()), 100, 30, &back);
 
-    let mut lettered = App::local();
-    lettered.piece_style = PieceStyle::BigLetter;
+    let mut lettered = Table::local(App::local());
+    lettered.play.piece_style = PieceStyle::BigLetter;
     sprites(&lettered, 120, 40, &back);
 
     // The plain-text dumps only make sense with character pieces.
-    app.piece_style = PieceStyle::Art;
+    app.play.piece_style = PieceStyle::Art;
     dump("big terminal", &app, 120, 40);
     dump("classic 80x24", &app, 80, 24);
 
-    let mut hosting = App::local();
-    hosting.piece_style = PieceStyle::Art;
-    hosting.me = Some(Color::White);
-    hosting.table.conn = Conn::Waiting;
-    hosting.table.share = Some("42-tiger-marble-ocean".into());
-    hosting.table.copied = Some(Copied::Terminal);
+    let mut hosting = Table::local(App::local());
+    hosting.play.piece_style = PieceStyle::Art;
+    hosting.play.me = Some(Color::White);
+    hosting.ctx.conn = Conn::Waiting;
+    hosting.ctx.share = Some("42-tiger-marble-ocean".into());
+    hosting.ctx.copied = Some(Copied::Terminal);
     dump("hosting, waiting", &hosting, 100, 30);
 
     let mut lobby = Lobby::new();
@@ -142,7 +142,7 @@ fn main() {
     dump_lobby("lobby with friends", &lobby, 80, 30);
     lobby.invite = Some(Invited {
         name: "alice".into(),
-        game: tui_tui::games::Kind::Chess,
+        game: tui_tui::games::chess::KIND,
     });
     dump_lobby("an invite", &lobby, 80, 30);
     lobby.invite = None;
@@ -155,16 +155,16 @@ fn main() {
     lobby.input = "42-tiger-xylo".into();
     dump_lobby("lobby, a word that is not one", &lobby, 60, 20);
 
-    let mut promo = App::local();
-    promo.piece_style = PieceStyle::Art;
+    let mut promo = Table::local(App::local());
+    promo.play.piece_style = PieceStyle::Art;
     for m in [
         "d2d4", "e7e5", "d4e5", "d7d5", "e5d6", "g8f6", "d6c7", "a7a6",
     ] {
-        promo.game.play_uci(m).unwrap();
+        promo.play.game.play_uci(m).unwrap();
     }
-    promo.game.cursor = Square::C7;
-    promo.game.activate(None);
-    promo.game.cursor = Square::B8;
-    promo.game.activate(None);
+    promo.play.game.cursor = Square::C7;
+    promo.play.game.activate(None);
+    promo.play.game.cursor = Square::B8;
+    promo.play.game.activate(None);
     dump("promotion prompt", &promo, 100, 30);
 }

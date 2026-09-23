@@ -3,6 +3,7 @@
 use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 use shakmaty::{Role, Square};
+use tui_tui::games::Table;
 use tui_tui::games::chess::app::App;
 use tui_tui::games::chess::ui::Geometry;
 
@@ -19,7 +20,7 @@ fn centre_of(g: &Geometry, sq: Square, flipped: bool) -> (u16, u16) {
     (g.grid.x + col * cw + cw / 2, g.grid.y + row * ch + ch / 2)
 }
 
-fn press(app: &mut App, x: u16, y: u16) {
+fn press(app: &mut Table<App>, x: u16, y: u16) {
     app.on_mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: x,
@@ -28,7 +29,7 @@ fn press(app: &mut App, x: u16, y: u16) {
     });
 }
 
-fn release(app: &mut App, x: u16, y: u16) {
+fn release(app: &mut Table<App>, x: u16, y: u16) {
     app.on_mouse(MouseEvent {
         kind: MouseEventKind::Up(MouseButton::Left),
         column: x,
@@ -37,16 +38,16 @@ fn release(app: &mut App, x: u16, y: u16) {
     });
 }
 
-fn click(app: &mut App, sq: Square) {
-    let g = Geometry::new(app.area);
-    let (x, y) = centre_of(&g, sq, app.flipped);
+fn click(app: &mut Table<App>, sq: Square) {
+    let g = Geometry::new(app.ctx.area);
+    let (x, y) = centre_of(&g, sq, app.play.flipped);
     press(app, x, y);
     release(app, x, y);
 }
 
-fn app_at(w: u16, h: u16) -> App {
-    let mut app = App::local();
-    app.area = Rect::new(0, 0, w, h);
+fn app_at(w: u16, h: u16) -> Table<App> {
+    let mut app = Table::local(App::local());
+    app.ctx.area = Rect::new(0, 0, w, h);
     app
 }
 
@@ -96,39 +97,39 @@ fn clicking_a_piece_then_a_square_moves_it() {
     let mut app = app_at(100, 30);
     click(&mut app, Square::E2);
     assert_eq!(
-        app.game.selected,
+        app.play.game.selected,
         Some(Square::E2),
         "a click picks the pawn up"
     );
 
     click(&mut app, Square::E4);
-    assert_eq!(app.game.history, ["e4"]);
-    assert_eq!(app.game.selected, None);
+    assert_eq!(app.play.game.history, ["e4"]);
+    assert_eq!(app.play.game.selected, None);
 }
 
 #[test]
 fn dragging_a_piece_moves_it() {
     let mut app = app_at(120, 40);
-    let g = Geometry::new(app.area);
+    let g = Geometry::new(app.ctx.area);
     let (fx, fy) = centre_of(&g, Square::G1, false);
     let (tx, ty) = centre_of(&g, Square::F3, false);
 
     press(&mut app, fx, fy);
     release(&mut app, tx, ty);
-    assert_eq!(app.game.history, ["Nf3"]);
+    assert_eq!(app.play.game.history, ["Nf3"]);
 }
 
 #[test]
 fn dropping_on_an_illegal_square_plays_nothing() {
     let mut app = app_at(120, 40);
-    let g = Geometry::new(app.area);
+    let g = Geometry::new(app.ctx.area);
     let (fx, fy) = centre_of(&g, Square::E2, false);
     let (tx, ty) = centre_of(&g, Square::E5, false);
 
     press(&mut app, fx, fy);
     release(&mut app, tx, ty);
     assert!(
-        app.game.history.is_empty(),
+        app.play.game.history.is_empty(),
         "e2e5 is not a legal first move"
     );
 }
@@ -137,7 +138,7 @@ fn dropping_on_an_illegal_square_plays_nothing() {
 fn a_right_click_puts_the_piece_back_down() {
     let mut app = app_at(100, 30);
     click(&mut app, Square::D2);
-    assert!(app.game.selected.is_some());
+    assert!(app.play.game.selected.is_some());
 
     app.on_mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Right),
@@ -145,13 +146,13 @@ fn a_right_click_puts_the_piece_back_down() {
         row: 0,
         modifiers: KeyModifiers::NONE,
     });
-    assert_eq!(app.game.selected, None);
+    assert_eq!(app.play.game.selected, None);
 }
 
 #[test]
 fn hovering_moves_the_cursor() {
     let mut app = app_at(100, 30);
-    let g = Geometry::new(app.area);
+    let g = Geometry::new(app.ctx.area);
     let (x, y) = centre_of(&g, Square::C6, false);
     app.on_mouse(MouseEvent {
         kind: MouseEventKind::Moved,
@@ -159,7 +160,7 @@ fn hovering_moves_the_cursor() {
         row: y,
         modifiers: KeyModifiers::NONE,
     });
-    assert_eq!(app.game.cursor, Square::C6);
+    assert_eq!(app.play.game.cursor, Square::C6);
 }
 
 #[test]
@@ -168,18 +169,24 @@ fn the_promotion_prompt_is_clickable() {
     for m in [
         "d2d4", "e7e5", "d4e5", "d7d5", "e5d6", "g8f6", "d6c7", "a7a6",
     ] {
-        app.game.play_uci(m).unwrap();
+        app.play.game.play_uci(m).unwrap();
     }
     click(&mut app, Square::C7);
     click(&mut app, Square::B8);
-    assert!(app.game.promotion.is_some(), "the prompt should be open");
+    assert!(
+        app.play.game.promotion.is_some(),
+        "the prompt should be open"
+    );
 
     // Third piece across is the bishop.
-    let g = Geometry::new(app.area);
+    let g = Geometry::new(app.ctx.area);
     let x = g.promo.x + 1 + 2 * g.promo_cell + g.promo_cell / 2;
     press(&mut app, x, g.promo.y + 1);
 
-    assert!(app.game.promotion.is_none());
-    assert_eq!(app.game.history.last().unwrap(), "cxb8=B");
-    assert_eq!(app.game.piece_at(Square::B8).unwrap().role, Role::Bishop);
+    assert!(app.play.game.promotion.is_none());
+    assert_eq!(app.play.game.history.last().unwrap(), "cxb8=B");
+    assert_eq!(
+        app.play.game.piece_at(Square::B8).unwrap().role,
+        Role::Bishop
+    );
 }

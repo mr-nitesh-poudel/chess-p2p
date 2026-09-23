@@ -32,15 +32,16 @@
 
 use std::time::Duration;
 
+use super::lines::Lines;
+use super::name::clean_name;
+use super::{Code, Game};
 use anyhow::{Context, Result, anyhow, bail};
 use iroh::EndpointId;
 use iroh::endpoint::{RecvStream, SendStream};
 use spake2::{Ed25519Group, Identity, Password, Spake2};
-use tokio::io::{BufReader, Lines};
 
-use super::{Code, Game};
-
-pub type Reader = Lines<BufReader<RecvStream>>;
+/// A peer's side of the conversation, one bounded line at a time.
+pub type Reader = Lines<RecvStream>;
 
 const IDENTITY: &[u8] = b"tui-tui/session/1";
 
@@ -116,7 +117,7 @@ pub async fn host_code(
     )
     .await?;
 
-    let their_name = hear(lines, "name").await?;
+    let their_name = hear_name(lines).await?;
     say(send, &format!("name {name}")).await?;
     say(send, &format!("game {} {}", game.name, game.version)).await?;
     hear(lines, "ok").await?;
@@ -149,7 +150,7 @@ pub async fn join_code(
     }
 
     say(send, &format!("name {name}")).await?;
-    let their_name = hear(lines, "name").await?;
+    let their_name = hear_name(lines).await?;
 
     let offer = hear(lines, "game").await?;
     match parse_game(&offer, games) {
@@ -174,7 +175,7 @@ pub async fn invite(
     say(send, "invite").await?;
     say(send, &format!("name {name}")).await?;
     say(send, &format!("game {} {}", game.name, game.version)).await?;
-    let their_name = hear(lines, "name").await?;
+    let their_name = hear_name(lines).await?;
     hear(lines, "ok").await?;
     Ok(their_name)
 }
@@ -182,7 +183,7 @@ pub async fn invite(
 /// The host's first look at an invite, just after its opening line: who says
 /// they are asking, and to play what.
 pub async fn read_invite(lines: &mut Reader, games: &[Game]) -> Result<(String, Option<Game>)> {
-    let name = hear(lines, "name").await?;
+    let name = hear_name(lines).await?;
     let offer = hear(lines, "game").await?;
     Ok((name, parse_game(&offer, games)))
 }
@@ -248,6 +249,13 @@ pub async fn refuse(send: &mut SendStream, why: &str) {
 
 /// The next line, which has to be `verb`, returning whatever follows it. The
 /// peer backing out with `no <why>` comes back as the error.
+/// The peer's name, cleaned on the way in. Empty if nothing readable was
+/// sent; whoever shows it falls back to the peer's endpoint id.
+async fn hear_name(lines: &mut Reader) -> Result<String> {
+    let name = hear(lines, "name").await?;
+    Ok(clean_name(&name).unwrap_or_default())
+}
+
 pub async fn hear(lines: &mut Reader, verb: &str) -> Result<String> {
     let line = lines
         .next_line()

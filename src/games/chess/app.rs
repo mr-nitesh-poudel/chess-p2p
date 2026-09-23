@@ -2,18 +2,14 @@
 
 use std::time::{Duration, Instant};
 
-use ratatui::crossterm::event::{
-    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-};
-use ratatui::layout::Rect;
+use ratatui::crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::style::{Color as Paint, Modifier, Style};
 use shakmaty::{Color, Move, Piece, Position, Role, Square};
 
 use super::protocol::Msg;
 use super::rules::{Game, PROMOTION_ROLES, ui_to};
 use super::ui::{Geometry, PieceStyle};
-use crate::games::{Conn, Kind, Seat, Table};
-use crate::net::NetEvent;
+use crate::games::{Ctx, Handled, Seat};
 
 /// How long a piece takes to travel between two squares.
 pub const SLIDE: Duration = Duration::from_millis(160);
@@ -92,32 +88,19 @@ pub struct App {
     pub game: Game,
     /// The side we are allowed to move, or `None` when sharing a keyboard.
     pub me: Option<Color>,
-    /// The opponent, and how the connection to them is going.
-    pub table: Table,
     pub flipped: bool,
     pub piece_style: PieceStyle,
-    /// Whether the terminal is reporting mouse events to us.
-    pub mouse: bool,
-    /// Last known terminal size, for turning clicks into squares.
-    pub area: Rect,
     /// The square a press picked a piece up from, for drag-and-drop.
     drag_from: Option<Square>,
     pub slide: Option<Slide>,
     /// Overrides the animation clock, so a test can render an exact frame.
     pub clock: Option<Instant>,
-    /// Done with this game: back to the lobby.
-    pub quit: bool,
-    /// Done with the program altogether.
-    pub exit: bool,
     pub confirm_resign: bool,
-    /// Asked to leave a game still in play, and not yet sure.
-    pub confirm_quit: bool,
     /// The peer has offered a draw and we have not answered.
     pub draw_offered: bool,
     /// We have offered a draw and are waiting for an answer.
     pub draw_sent: bool,
     pub draw_agreed: bool,
-    pub note: Option<String>,
     /// When the finale began: the mating piece landed, or someone resigned.
     pub ended: Option<Instant>,
     /// When the last check landed, for the pulse on the king's square.
@@ -131,22 +114,15 @@ impl App {
         Self {
             game: Game::new(),
             me: None,
-            table: Table::local(),
             flipped: false,
             piece_style: PieceStyle::Octant,
-            mouse: true,
-            area: Rect::new(0, 0, 80, 24),
             drag_from: None,
             slide: None,
             clock: None,
-            quit: false,
-            exit: false,
             confirm_resign: false,
-            confirm_quit: false,
             draw_offered: false,
             draw_sent: false,
             draw_agreed: false,
-            note: None,
             ended: None,
             checked: None,
             banner_hidden: false,
@@ -154,14 +130,9 @@ impl App {
     }
 
     /// A game at `seat`. The host plays white.
-    pub fn new(seat: Seat, table: Table) -> Self {
+    pub fn new(seat: Seat) -> Self {
         let me = match seat {
-            Seat::Local => {
-                return Self {
-                    table,
-                    ..Self::local()
-                };
-            }
+            Seat::Local => return Self::local(),
             Seat::Host => Color::White,
             Seat::Guest => Color::Black,
         };
@@ -169,9 +140,13 @@ impl App {
             me: Some(me),
             // Always sit behind your own pieces.
             flipped: me == Color::Black,
-            table,
             ..Self::local()
         }
+    }
+
+    /// Whether the game is still being played, rather than decided.
+    pub fn in_play(&self) -> bool {
+        !(self.game.over() || self.draw_agreed)
     }
 
     fn now(&self) -> Instant {
@@ -346,14 +321,10 @@ impl App {
     }
 
     /// A move we made: animate it and tell the opponent.
-    fn broadcast(&mut self, m: Move) {
+    fn broadcast(&mut self, m: Move, ctx: &Ctx) {
         self.begin_slide(m);
         let uci = self.game.to_uci(m);
-        self.send(Msg::Move(uci));
-    }
-
-    fn send(&self, msg: Msg) {
-        self.table.send(msg.line());
+        ctx.send(Msg::Move(uci).line());
     }
 
     /// Is it our move? Always true in hot-seat.
@@ -362,7 +333,7 @@ impl App {
     }
 
     /// The one-line description of where the game stands.
-    pub fn state_line(&self) -> (String, Style) {
+    pub fn state_line(&self, ctx: &Ctx) -> (String, Style) {
         let bold = Style::default().add_modifier(Modifier::BOLD);
         let win = bold.fg(Paint::Rgb(124, 176, 95));
         let warn = Style::default().fg(Paint::Rgb(209, 106, 88));
@@ -392,7 +363,7 @@ impl App {
         if self.game.pos.is_insufficient_material() {
             return ("draw — insufficient material".into(), bold);
         }
-        if let Some(note) = &self.note {
+        if let Some(note) = &ctx.note {
             return (note.clone(), warn);
         }
         if self.draw_offered {
@@ -416,23 +387,18 @@ impl App {
         ("your move".into(), Style::default())
     }
 
-    pub fn on_key(&mut self, key: KeyEvent) {
-        if key.kind != KeyEventKind::Press {
-            return;
-        }
-        self.note = None;
-
+    /// A key the table passed on. Leaving, the mouse and the share code are
+    /// the table's; anything this has no use for goes back to it.
+    pub fn on_key(&mut self, key: KeyEvent, ctx: &mut Ctx) -> Handled {
         if self.game.promotion.is_some() {
-            self.promotion_key(key.code);
-            return;
+            self.promotion_key(key.code, ctx);
+            return Handled::Used;
         }
         // During the finale a key skips to its end, and once the verdict is
-        // up a key clears it away to look at the board.
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let quitting = key.code == KeyCode::Char('q') || ctrl && key.code == KeyCode::Char('c');
-        let finale = self
-            .ending()
-            .filter(|_| !quitting && self.ended.is_some() && !self.banner_hidden);
+        // up a key clears it away to look at the board. q still leaves.
+        let finale = self.ending().filter(|_| {
+            key.code != KeyCode::Char('q') && self.ended.is_some() && !self.banner_hidden
+        });
         if let Some(how) = finale {
             if self.is_animating() {
                 self.slide = None;
@@ -441,64 +407,34 @@ impl App {
             } else {
                 self.banner_hidden = true;
             }
-            return;
-        }
-        if self.confirm_quit {
-            // q again confirms, so a double tap still gets out quickly.
-            self.confirm_quit = false;
-            match key.code {
-                KeyCode::Char('y' | 'q') | KeyCode::Enter => self.quit = true,
-                KeyCode::Char('c') if ctrl => self.exit = true,
-                _ => {}
-            }
-            return;
+            return Handled::Used;
         }
         if self.confirm_resign {
-            match key.code {
-                KeyCode::Char('y') => {
-                    self.confirm_resign = false;
-                    let me = self.me.unwrap_or(self.game.turn());
-                    self.game.resigned = Some(me);
-                    self.ended = Some(self.now());
-                    self.send(Msg::Resign);
-                }
-                _ => self.confirm_resign = false,
+            self.confirm_resign = false;
+            if key.code == KeyCode::Char('y') {
+                let me = self.me.unwrap_or(self.game.turn());
+                self.game.resigned = Some(me);
+                self.ended = Some(self.now());
+                ctx.send(Msg::Resign.line());
             }
-            return;
+            return Handled::Used;
         }
 
         match key.code {
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => self.exit = true,
-            KeyCode::Char('q') => self.leave(),
-            KeyCode::Esc => {
-                if self.game.selected.is_some() {
-                    self.game.selected = None;
-                } else {
-                    self.leave();
-                }
-            }
+            // Esc puts a piece down before it means leaving.
+            KeyCode::Esc if self.game.selected.is_some() => self.game.selected = None,
             KeyCode::Char('f') => self.flipped = !self.flipped,
             KeyCode::Char('p') => self.piece_style = self.piece_style.next(),
-            KeyCode::Char('m') => self.mouse = !self.mouse,
-            KeyCode::Char('c') => self.table.copy_share(),
             KeyCode::Char('r') if !self.game.over() => self.confirm_resign = true,
-            KeyCode::Char('d') if !self.game.over() => self.draw_key(),
+            KeyCode::Char('d') if !self.game.over() => self.draw_key(ctx),
             KeyCode::Left | KeyCode::Char('h') => self.nudge(-1, 0),
             KeyCode::Right | KeyCode::Char('l') => self.nudge(1, 0),
             KeyCode::Up | KeyCode::Char('k') => self.nudge(0, 1),
             KeyCode::Down | KeyCode::Char('j') => self.nudge(0, -1),
-            KeyCode::Enter | KeyCode::Char(' ') => self.activate(),
-            _ => {}
+            KeyCode::Enter | KeyCode::Char(' ') => self.activate(ctx),
+            _ => return Handled::Unused,
         }
-    }
-
-    /// Back to the lobby, asking first if there is still a game to lose.
-    fn leave(&mut self) {
-        if self.game.over() || self.draw_agreed {
-            self.quit = true;
-        } else {
-            self.confirm_quit = true;
-        }
+        Handled::Used
     }
 
     /// Cursor deltas are in screen terms; the board may be upside down.
@@ -510,16 +446,16 @@ impl App {
         }
     }
 
-    fn activate(&mut self) {
+    fn activate(&mut self, ctx: &Ctx) {
         if !self.my_turn() {
             return;
         }
         if let Some(m) = self.game.activate(self.me) {
-            self.broadcast(m);
+            self.broadcast(m, ctx);
         }
     }
 
-    fn promotion_key(&mut self, code: KeyCode) {
+    fn promotion_key(&mut self, code: KeyCode, ctx: &Ctx) {
         let Some(p) = self.game.promotion.as_mut() else {
             return;
         };
@@ -532,7 +468,7 @@ impl App {
                 p.choice = (p.choice + 1) % PROMOTION_ROLES.len();
                 None
             }
-            KeyCode::Enter | KeyCode::Char(' ') => Some(PROMOTION_ROLES[p.choice]),
+            KeyCode::Enter | KeyCode::Char(' ') => PROMOTION_ROLES.get(p.choice).copied(),
             KeyCode::Char('q') => Some(Role::Queen),
             KeyCode::Char('r') => Some(Role::Rook),
             KeyCode::Char('b') => Some(Role::Bishop),
@@ -544,39 +480,44 @@ impl App {
             _ => None,
         };
         if let Some(m) = chosen.and_then(|role| self.game.promote(role)) {
-            self.broadcast(m);
+            self.broadcast(m, ctx);
         }
     }
 
-    fn draw_key(&mut self) {
+    fn draw_key(&mut self, ctx: &Ctx) {
         if self.draw_offered {
             self.draw_offered = false;
             self.draw_agreed = true;
-            self.send(Msg::Draw);
-        } else if self.table.is_networked() && !self.draw_sent {
+            ctx.send(Msg::Draw.line());
+        } else if ctx.is_networked() && !self.draw_sent {
             self.draw_sent = true;
-            self.send(Msg::Draw);
+            ctx.send(Msg::Draw.line());
         }
     }
 
-    pub fn on_net(&mut self, event: NetEvent) {
-        match event {
-            NetEvent::Progress(p) => {
-                if let Some(note) = self.table.on_progress(p, Kind::Chess) {
-                    self.note = Some(note);
-                }
-            }
-            NetEvent::Line(line) => {
-                if let Some(msg) = Msg::parse(&line) {
-                    self.on_msg(msg);
-                }
-            }
-            NetEvent::Disconnected(why) => self.table.conn = Conn::Lost(why),
+    /// A line from the opponent. Anything that is not one of chess's messages
+    /// is ignored, so the protocol can grow.
+    pub fn on_line(&mut self, line: &str, ctx: &mut Ctx) {
+        if let Some(msg) = Msg::parse(line) {
+            self.on_msg(msg, ctx);
         }
     }
 
-    fn on_msg(&mut self, msg: Msg) {
+    /// A message from the opponent. Nothing here trusts it: a move is checked
+    /// against whose turn it is as well as against the rules, and a finished
+    /// game takes no more messages at all.
+    fn on_msg(&mut self, msg: Msg, ctx: &mut Ctx) {
+        // Only an opponent sends messages; with none, there is nobody to hear.
+        let Some(me) = self.me else { return };
+        if !self.in_play() {
+            return;
+        }
         match msg {
+            // The rules alone would accept a legal move for our side, sent on
+            // our turn, and play our pieces for us.
+            Msg::Move(_) if self.game.turn() == me => {
+                ctx.note = Some("peer tried to move out of turn".into());
+            }
             Msg::Move(uci) => match self.game.play_uci(&uci) {
                 // Playing on silently declines any outstanding draw offer.
                 Ok(m) => {
@@ -586,10 +527,10 @@ impl App {
                 }
                 // A peer running the same code cannot produce this, so it means
                 // the two sides have diverged. Say so rather than guessing.
-                Err(why) => self.note = Some(format!("peer sent {why}")),
+                Err(why) => ctx.note = Some(format!("peer sent {why}")),
             },
             Msg::Resign => {
-                self.game.resigned = self.me.map(|me| !me);
+                self.game.resigned = Some(!me);
                 self.ended = Some(self.now());
             }
             // A draw message answers our own offer, or starts a new one.
@@ -604,15 +545,15 @@ impl App {
         }
     }
 
-    pub fn on_mouse(&mut self, ev: MouseEvent) {
-        let g = Geometry::new(self.area);
+    pub fn on_mouse(&mut self, ev: MouseEvent, ctx: &mut Ctx) {
+        let g = Geometry::new(ctx.area);
         if self.banner_showing() && matches!(ev.kind, MouseEventKind::Down(_)) {
             self.banner_hidden = true;
             return;
         }
         match ev.kind {
-            MouseEventKind::Down(MouseButton::Left) => self.press(&g, ev.column, ev.row),
-            MouseEventKind::Up(MouseButton::Left) => self.release(&g, ev.column, ev.row),
+            MouseEventKind::Down(MouseButton::Left) => self.press(&g, ev.column, ev.row, ctx),
+            MouseEventKind::Up(MouseButton::Left) => self.release(&g, ev.column, ev.row, ctx),
             // A right click puts a picked-up piece back down.
             MouseEventKind::Down(MouseButton::Right) => {
                 self.game.selected = None;
@@ -628,21 +569,21 @@ impl App {
         }
     }
 
-    fn press(&mut self, g: &Geometry, x: u16, y: u16) {
-        self.note = None;
+    fn press(&mut self, g: &Geometry, x: u16, y: u16, ctx: &mut Ctx) {
+        ctx.note = None;
 
         if self.game.promotion.is_some() {
             let picked = g
                 .promo_at(x, y)
-                .and_then(|i| self.game.promote(PROMOTION_ROLES[i]));
+                .and_then(|i| PROMOTION_ROLES.get(i).copied())
+                .and_then(|role| self.game.promote(role));
             if let Some(m) = picked {
-                self.broadcast(m);
+                self.broadcast(m, ctx);
             }
             return;
         }
-        if self.confirm_resign || self.confirm_quit {
+        if self.confirm_resign {
             self.confirm_resign = false;
-            self.confirm_quit = false;
             return;
         }
 
@@ -650,12 +591,12 @@ impl App {
             return;
         };
         self.game.cursor = sq;
-        self.activate();
+        self.activate(ctx);
         // Remember the piece we picked up, so a drag can drop it elsewhere.
         self.drag_from = self.game.selected;
     }
 
-    fn release(&mut self, g: &Geometry, x: u16, y: u16) {
+    fn release(&mut self, g: &Geometry, x: u16, y: u16, ctx: &Ctx) {
         let Some(from) = self.drag_from.take() else {
             return;
         };
@@ -667,6 +608,6 @@ impl App {
             return;
         }
         self.game.cursor = sq;
-        self.activate();
+        self.activate(ctx);
     }
 }

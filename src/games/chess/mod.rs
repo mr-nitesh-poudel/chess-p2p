@@ -1,6 +1,9 @@
 //! Chess: the rules ([`rules`]), the state and what keys mean ([`app`]), the
 //! board ([`ui`], with pieces drawn by [`canvas`]), and what the two sides
 //! say to each other ([`protocol`]).
+//!
+//! This is the whole of chess's connection to the rest of the program: a
+//! [`Descriptor`] for the registry, and [`Play`] for the table.
 
 pub mod app;
 pub mod canvas;
@@ -10,62 +13,50 @@ pub mod ui;
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyEvent, MouseEvent};
-use ratatui::layout::Rect;
 
 pub use app::App;
 pub use protocol::GAME;
 
-use super::{Kind, Leave, Play, Table};
-use crate::net::NetEvent;
+use super::{Ctx, Descriptor, Handled, Kind, Play, Seat, Table};
+
+pub const DESCRIPTOR: Descriptor = Descriptor {
+    name: "Chess",
+    wire: GAME,
+    start,
+};
+
+pub const KIND: Kind = Kind::new(&DESCRIPTOR);
+
+fn start(seat: Seat, ctx: Ctx) -> Box<Table<dyn Play>> {
+    Box::new(Table::new(ctx, App::new(seat)))
+}
 
 impl Play for App {
     fn kind(&self) -> Kind {
-        Kind::Chess
+        KIND
     }
 
-    fn table(&self) -> &Table {
-        &self.table
+    fn on_key(&mut self, key: KeyEvent, ctx: &mut Ctx) -> Handled {
+        App::on_key(self, key, ctx)
     }
 
-    fn table_mut(&mut self) -> &mut Table {
-        &mut self.table
+    fn on_mouse(&mut self, ev: MouseEvent, ctx: &mut Ctx) {
+        App::on_mouse(self, ev, ctx);
     }
 
-    fn on_key(&mut self, key: KeyEvent) {
-        App::on_key(self, key);
+    fn on_line(&mut self, line: &str, ctx: &mut Ctx) {
+        App::on_line(self, line, ctx);
     }
 
-    fn on_mouse(&mut self, ev: MouseEvent) {
-        App::on_mouse(self, ev);
+    fn draw(&self, f: &mut Frame, ctx: &Ctx) {
+        ui::draw(f, self, ctx);
     }
 
-    fn on_net(&mut self, ev: NetEvent) {
-        App::on_net(self, ev);
-    }
-
-    fn draw(&self, f: &mut Frame) {
-        ui::draw(f, self);
-    }
-
-    fn set_area(&mut self, area: Rect) {
-        self.area = area;
+    fn in_play(&self) -> bool {
+        App::in_play(self)
     }
 
     fn is_animating(&self) -> bool {
         App::is_animating(self)
-    }
-
-    fn wants_mouse(&self) -> bool {
-        self.mouse
-    }
-
-    fn leaving(&self) -> Option<Leave> {
-        if self.exit {
-            Some(Leave::Exit)
-        } else if self.quit {
-            Some(Leave::Lobby)
-        } else {
-            None
-        }
     }
 }

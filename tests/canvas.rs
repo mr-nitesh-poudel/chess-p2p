@@ -6,9 +6,10 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use shakmaty::{Color, File, Rank, Role, Square};
+use tui_tui::games::Table;
 use tui_tui::games::chess::app::App;
 use tui_tui::games::chess::canvas::Dots;
-use tui_tui::games::chess::ui::{self, Geometry, PieceStyle, canvas_colour};
+use tui_tui::games::chess::ui::{Geometry, PieceStyle, canvas_colour};
 
 /// 11x5 squares.
 const BIG: (u16, u16) = (140, 52);
@@ -21,15 +22,15 @@ const STYLES: [(PieceStyle, Dots); 2] = [
     (PieceStyle::Braille, Dots::Braille),
 ];
 
-fn app(style: PieceStyle) -> App {
-    let mut app = App::local();
-    app.piece_style = style;
+fn app(style: PieceStyle) -> Table<App> {
+    let mut app = Table::local(App::local());
+    app.play.piece_style = style;
     app
 }
 
-fn render(app: &App, (w, h): (u16, u16)) -> (Buffer, Geometry) {
+fn render(app: &Table<App>, (w, h): (u16, u16)) -> (Buffer, Geometry) {
     let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
-    terminal.draw(|f| ui::draw(f, app)).unwrap();
+    terminal.draw(|f| app.draw(f)).unwrap();
     let buf = terminal.backend().buffer().clone();
     (buf, Geometry::new(Rect::new(0, 0, w, h)))
 }
@@ -205,7 +206,7 @@ fn the_square_shows_between_the_dots() {
 
 fn square_shows(style: PieceStyle) {
     let mut app = app(style);
-    app.game.cursor = square(4, 4);
+    app.play.game.cursor = square(4, 4);
     let (buf, g) = render(&app, BIG);
     for (_, sq) in all_roles(Color::White)
         .into_iter()

@@ -12,12 +12,11 @@ use super::{
     FLASH, GUTTER, Geometry, LIGHT, MATE_RED, PIECE_BLACK, PIECE_WHITE, PieceStyle, VERDICT_BG,
     side_name,
 };
-use crate::clipboard::Copied;
-use crate::games::Conn;
 use crate::games::chess::app::{App, Ending, Finale};
 use crate::games::chess::canvas;
 use crate::games::chess::rules::PROMOTION_ROLES;
-use crate::ui::{CAPTURE, CURSOR, MUTED, SELECTED, blend, centred};
+use crate::games::{Ctx, chrome};
+use crate::ui::{CURSOR, MUTED, blend, centred};
 
 /// The pieces `side` has captured, plus their material edge if they have one.
 pub(super) fn draw_tray(f: &mut Frame, area: Rect, app: &App, side: Side) {
@@ -50,7 +49,7 @@ pub(super) fn draw_tray(f: &mut Frame, area: Rect, app: &App, side: Side) {
     f.render_widget(Paragraph::new(line), area);
 }
 
-pub(super) fn draw_sidebar(f: &mut Frame, area: Rect, app: &App) {
+pub(super) fn draw_sidebar(f: &mut Frame, area: Rect, app: &App, ctx: &Ctx) {
     let [status, moves] =
         Layout::vertical([Constraint::Length(12), Constraint::Min(3)]).areas(area);
 
@@ -71,57 +70,14 @@ pub(super) fn draw_sidebar(f: &mut Frame, area: Rect, app: &App) {
         Span::raw(side_name(app.game.turn())),
     ]));
 
-    let (state, style) = app.state_line();
+    let (state, style) = app.state_line(ctx);
     lines.push(Line::from(vec![
         Span::raw("     "),
         Span::styled(state, style),
     ]));
 
     lines.push(Line::raw(""));
-    match &app.table.conn {
-        Conn::Local => {}
-        Conn::Publishing | Conn::Waiting => {
-            lines.push(Line::styled("share this code:", Style::default().fg(MUTED)));
-            lines.push(Line::styled(
-                app.table.share.clone().unwrap_or_default(),
-                Style::default().fg(CURSOR),
-            ));
-            match app.table.copied {
-                Some(Copied::Clipboard) => {
-                    lines.push(Line::styled("copied ✓", Style::default().fg(SELECTED)));
-                }
-                // Nothing reports back whether the terminal did it, so say
-                // what to do if it did not.
-                Some(Copied::Terminal) => {
-                    lines.push(Line::styled(
-                        "copied via the terminal",
-                        Style::default().fg(SELECTED),
-                    ));
-                    if app.mouse {
-                        lines.push(Line::styled(
-                            "(no? m, then select it)",
-                            Style::default().fg(MUTED),
-                        ));
-                    }
-                }
-                None => lines.push(Line::styled("c copies it", Style::default().fg(MUTED))),
-            }
-            if matches!(app.table.conn, Conn::Publishing) {
-                lines.push(Line::styled("publishing it…", Style::default().fg(MUTED)));
-            }
-        }
-        Conn::LookingUp => lines.push(Line::styled("looking up code…", Style::default().fg(MUTED))),
-        Conn::Dialling => lines.push(Line::styled("connecting…", Style::default().fg(MUTED))),
-        Conn::Inviting(name) => lines.push(Line::styled(
-            format!("waiting for {name} to accept…"),
-            Style::default().fg(MUTED),
-        )),
-        Conn::Playing => lines.push(Line::from(vec![
-            Span::styled("peer ", Style::default().fg(MUTED)),
-            Span::raw(app.table.peer_label()),
-        ])),
-        Conn::Lost(why) => lines.push(Line::styled(why.clone(), Style::default().fg(CAPTURE))),
-    }
+    lines.extend(chrome::connection_lines(ctx));
 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
@@ -166,17 +122,11 @@ fn draw_moves(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-pub(super) fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
-    // A question waiting on an answer stands out from the usual key list.
-    let asking = Style::default().fg(CAPTURE).add_modifier(Modifier::BOLD);
-    let (keys, style) = if app.confirm_quit {
-        ("leave this game?   y leave   n stay", asking)
-    } else if app.confirm_resign {
-        ("resign this game?   y resign   n cancel", asking)
-    } else {
-        (footer_keys(app, area.width), Style::default().fg(MUTED))
-    };
-    f.render_widget(Paragraph::new(Line::styled(keys, style).centered()), area);
+pub(super) fn draw_footer(f: &mut Frame, area: Rect, app: &App, ctx: &Ctx) {
+    let question = app
+        .confirm_resign
+        .then_some("resign this game?   y resign   n cancel");
+    chrome::footer(f, area, ctx, question, footer_keys(app, area.width));
 }
 
 fn footer_keys(app: &App, width: u16) -> &'static str {
@@ -270,7 +220,14 @@ fn glyph(c: char) -> [&'static str; 5] {
 /// The verdict across the middle of the board, spelled out a letter at a
 /// time as `reveal` goes from 0 to 1. Each letter lands white hot and cools
 /// to red.
-pub(super) fn draw_verdict(f: &mut Frame, g: &Geometry, app: &App, fin: &Finale, reveal: f32) {
+pub(super) fn draw_verdict(
+    f: &mut Frame,
+    g: &Geometry,
+    app: &App,
+    ctx: &Ctx,
+    fin: &Finale,
+    reveal: f32,
+) {
     let word = match fin.how {
         Ending::Checkmate => "CHECKMATE",
         Ending::Resignation => "RESIGNED",
@@ -323,13 +280,13 @@ pub(super) fn draw_verdict(f: &mut Frame, g: &Geometry, app: &App, fin: &Finale,
         let loser = app.game.resigned.unwrap_or(app.game.turn());
         let verdict = match (fin.how, app.me) {
             (Ending::Checkmate, Some(me)) if me == loser => {
-                format!("{} wins", app.table.peer_label())
+                format!("{} wins", ctx.peer_label())
             }
             (Ending::Checkmate, Some(_)) => "you win".to_string(),
             (Ending::Checkmate, None) => format!("{} wins", side_name(!loser)),
             (Ending::Resignation, Some(me)) if me == loser => "you resigned".to_string(),
             (Ending::Resignation, Some(_)) => {
-                format!("{} resigned · you win", app.table.peer_label())
+                format!("{} resigned · you win", ctx.peer_label())
             }
             (Ending::Resignation, None) => {
                 format!("{} resigns · {} wins", side_name(loser), side_name(!loser))

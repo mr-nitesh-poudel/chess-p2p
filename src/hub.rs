@@ -18,7 +18,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::task::JoinHandle;
 
 use tui_tui::clipboard;
-use tui_tui::games::{Conn, Kind, Leave, Play, Seat, Table};
+use tui_tui::games::{Conn, Ctx, Kind, Leave, Play, Seat, Table};
 use tui_tui::lobby::{self, Choice, Invited, Lobby, Row};
 use tui_tui::net::{self, NetEvent};
 use tui_tui::profile::Profile;
@@ -45,7 +45,7 @@ enum Screen {
 struct Match {
     /// Tells this match's events from those of matches already left.
     id: u64,
-    game: Box<dyn Play>,
+    table: Box<Table<dyn Play>>,
     /// Whether the listener's next [`Incoming::Paired`] is for us.
     by_listener: bool,
     /// Our own dialling out, if that is how this match is being paired.
@@ -106,7 +106,7 @@ impl Hub {
             next_match: 0,
             invite: None,
             notice,
-            game: Kind::ALL[0],
+            game: Kind::DEFAULT,
         }
     }
 
@@ -140,29 +140,29 @@ impl Hub {
                     term.terminal.draw(|f| lobby::draw_lobby(f, lobby))?;
                 }
                 Screen::Match(m) => {
-                    match m.game.leaving() {
+                    match m.table.leaving() {
                         Some(Leave::Exit) => return Ok(()),
                         Some(Leave::Lobby) => {
-                            let last = m.game.table().peer;
-                            self.game = m.game.kind();
+                            let last = m.table.ctx.peer;
+                            self.game = m.table.kind();
                             screen = self.lobby(last);
                             continue;
                         }
                         None => {}
                     }
-                    term.set_mouse(m.game.wants_mouse());
-                    let table = m.game.table_mut();
-                    if let Some(text) = table.copy_request.take() {
-                        table.copied = Some(clipboard::copy(&text));
+                    term.set_mouse(m.table.wants_mouse());
+                    let ctx = &mut m.table.ctx;
+                    if let Some(text) = ctx.copy_request.take() {
+                        ctx.copied = Some(clipboard::copy(&text));
                     }
-                    m.game.set_area(area);
-                    term.terminal.draw(|f| m.game.draw(f))?;
+                    m.table.set_area(area);
+                    term.terminal.draw(|f| m.table.draw(f))?;
                 }
             }
 
             // While something is moving we redraw on a timer; the rest of
             // the time the loop sits idle waiting for something to happen.
-            let animating = matches!(&screen, Screen::Match(m) if m.game.is_animating());
+            let animating = matches!(&screen, Screen::Match(m) if m.table.is_animating());
             let wake = tokio::select! {
                 wake = woken.recv() => match wake {
                     Some(wake) => wake,
@@ -189,8 +189,8 @@ impl Hub {
                 }
                 (Wake::Input(ev), Screen::Match(m)) => {
                     match ev {
-                        Event::Key(key) => m.game.on_key(key),
-                        Event::Mouse(mouse) => m.game.on_mouse(mouse),
+                        Event::Key(key) => m.table.on_key(key),
+                        Event::Mouse(mouse) => m.table.on_mouse(mouse),
                         _ => {}
                     }
                     Next::Stay
@@ -203,12 +203,12 @@ impl Hub {
                     m.dialling = None;
                     match result {
                         Ok(link) => self.play(m, link),
-                        Err(why) => m.game.table_mut().conn = Conn::Lost(why),
+                        Err(why) => m.table.lost(why),
                     }
                     Next::Stay
                 }
                 (Wake::Net(id, ev), Screen::Match(m)) if m.id == id => {
-                    m.game.on_net(ev);
+                    m.table.on_net(ev);
                     Next::Stay
                 }
                 // Left over from a match that has been left.
@@ -260,7 +260,7 @@ impl Hub {
             Choice::Quit => return Next::Exit,
             Choice::Local => {
                 self.listener.busy();
-                self.new_match(game.start(Seat::Local, Table::local()), false)
+                self.new_match(game.start(Seat::Local, Ctx::local()), false)
             }
             Choice::Host => self.host(game),
             Choice::Join(code) => self.join(code, game),
@@ -276,8 +276,8 @@ impl Hub {
                 self.listener.busy();
                 invite.accept(&self.profile.name);
                 // Whoever is invited goes first, as whoever hosts does.
-                let table = Table::new(Conn::Dialling, None);
-                self.new_match(game.start(Seat::Host, table), true)
+                let ctx = Ctx::new(Conn::Dialling, None);
+                self.new_match(game.start(Seat::Host, ctx), true)
             }
             Choice::DeclineInvite => {
                 if let Some(invite) = self.invite.take() {
@@ -306,11 +306,11 @@ impl Hub {
         Next::Go(Screen::Match(m))
     }
 
-    fn new_match(&mut self, game: Box<dyn Play>, by_listener: bool) -> Match {
+    fn new_match(&mut self, table: Box<Table<dyn Play>>, by_listener: bool) -> Match {
         self.next_match += 1;
         Match {
             id: self.next_match,
-            game,
+            table,
             by_listener,
             dialling: None,
         }
@@ -320,10 +320,10 @@ impl Hub {
         let code = Code::generate();
         self.listener
             .host(code, game.wire(), &self.profile.name, true);
-        let mut table = Table::new(Conn::Publishing, Some(code));
+        let mut ctx = Ctx::new(Conn::Publishing, Some(code));
         // Hosting is for sending the code to someone, so have it ready.
-        table.copy_share();
-        let m = game.start(Seat::Host, table);
+        ctx.copy_share();
+        let m = game.start(Seat::Host, ctx);
         self.new_match(m, true)
     }
 
@@ -331,8 +331,8 @@ impl Hub {
     /// game picked in the lobby stands in.
     fn join(&mut self, code: Code, game: Kind) -> Match {
         self.listener.busy();
-        let table = Table::new(Conn::LookingUp, None);
-        let mut m = self.new_match(game.start(Seat::Guest, table), false);
+        let ctx = Ctx::new(Conn::LookingUp, None);
+        let mut m = self.new_match(game.start(Seat::Guest, ctx), false);
         let (id, endpoint, wake, name) = (
             m.id,
             self.endpoint.clone(),
@@ -361,8 +361,8 @@ impl Hub {
             .profile
             .contact(friend)
             .map_or_else(|| friend.fmt_short().to_string(), |c| c.name.clone());
-        let table = Table::new(Conn::Inviting(their_name.clone()), None);
-        let mut m = self.new_match(game.start(Seat::Guest, table), false);
+        let ctx = Ctx::new(Conn::Inviting(their_name.clone()), None);
+        let mut m = self.new_match(game.start(Seat::Guest, ctx), false);
         let (id, endpoint, wake, name) = (
             m.id,
             self.endpoint.clone(),
@@ -379,7 +379,7 @@ impl Hub {
 
     fn heard(&mut self, incoming: Incoming, screen: &mut Screen) {
         let waiting = match screen {
-            Screen::Match(m) if m.by_listener && m.game.table().net.is_none() => Some(m),
+            Screen::Match(m) if m.by_listener && !m.table.ctx.is_networked() => Some(m),
             _ => None,
         };
         match incoming {
@@ -419,12 +419,12 @@ impl Hub {
             },
             Incoming::Progress(p) => {
                 if let Some(m) = waiting {
-                    m.game.on_net(NetEvent::Progress(p));
+                    m.table.on_net(NetEvent::Progress(p));
                 }
             }
             Incoming::Closed(why) => {
                 if let Some(m) = waiting {
-                    m.game.table_mut().conn = Conn::Lost(why);
+                    m.table.lost(why);
                 }
             }
         }
@@ -434,10 +434,9 @@ impl Hub {
     fn play(&mut self, m: &mut Match, link: Link) {
         // Joining by code finds out only now what the host is playing.
         if let Some(kind) = Kind::from_wire(link.game)
-            && kind != m.game.kind()
+            && kind != m.table.kind()
         {
-            let table = Table::new(Conn::Dialling, None);
-            m.game = kind.start(Seat::Guest, table);
+            m.table = kind.start(Seat::Guest, Ctx::new(Conn::Dialling, None));
         }
         if let Err(e) = self.profile.played(link.peer, &link.peer_name) {
             self.notice = Some(format!("could not save your friends: {e:#}"));
@@ -454,7 +453,7 @@ impl Hub {
                 let _ = wake.send(Wake::Net(id, ev));
             }
         });
-        m.game.attach(net::play(link, events), &name);
+        m.table.attach(net::play(link, events), &name);
     }
 }
 

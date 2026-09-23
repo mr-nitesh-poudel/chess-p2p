@@ -18,6 +18,8 @@
 
 pub mod code;
 pub mod handshake;
+pub mod lines;
+pub mod name;
 pub mod rendezvous;
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -26,7 +28,6 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use iroh::endpoint::{SendStream, presets};
 use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -147,7 +148,7 @@ pub async fn join(
         .await
         .context("found the game, but could not reach your opponent")?;
     let (mut send, recv) = conn.open_bi().await.context("opening stream")?;
-    let mut lines = BufReader::new(recv).lines();
+    let mut lines = Reader::new(recv);
     let (game, peer_name) = tokio::time::timeout(
         HANDSHAKE_TIMEOUT,
         handshake::join_code(
@@ -185,7 +186,7 @@ pub async fn invite(
         .map_err(|_| Unreachable)?
         .map_err(|_| Unreachable)?;
     let (mut send, recv) = conn.open_bi().await.map_err(|_| Unreachable)?;
-    let mut lines = BufReader::new(recv).lines();
+    let mut lines = Reader::new(recv);
     let peer_name = tokio::time::timeout(
         INVITE_TIMEOUT + HANDSHAKE_TIMEOUT,
         handshake::invite(&mut send, &mut lines, game, name),
@@ -387,7 +388,7 @@ impl Inner {
         let conn = incoming.await?;
         let peer = conn.remote_id();
         let (mut send, recv) = tokio::time::timeout(HANDSHAKE_TIMEOUT, conn.accept_bi()).await??;
-        let mut lines = BufReader::new(recv).lines();
+        let mut lines = Reader::new(recv);
         let opening = tokio::time::timeout(HANDSHAKE_TIMEOUT, lines.next_line())
             .await??
             .context("peer hung up")?;

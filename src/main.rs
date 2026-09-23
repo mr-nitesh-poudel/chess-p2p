@@ -1,10 +1,12 @@
 //! tuitui — terminal games over a direct peer-to-peer connection.
 //!
-//!     tuitui                 the lobby: pick a game, host, join, challenge a friend
-//!     tuitui play [game]     the same, on the game named
-//!     tuitui local [game]    two players, one keyboard
-//!     tuitui host [game]     wait for an opponent, and go first
-//!     tuitui join <code>     join with an opponent's code
+//! ```text
+//! tuitui                 the lobby: pick a game, host, join, challenge a friend
+//! tuitui play [game]     the same, on the game named
+//! tuitui local [game]    two players, one keyboard
+//! tuitui host [game]     wait for an opponent, and go first
+//! tuitui join <code>     join with an opponent's code
+//! ```
 //!
 //! Without a game named, the first there is; the lobby starts on whichever is.
 
@@ -61,14 +63,6 @@ fn usage() -> String {
     USAGE.replace("{games}", &games.join(", "))
 }
 
-/// A game named on the command line.
-fn named_game(word: &str) -> Option<Kind> {
-    Kind::ALL
-        .iter()
-        .copied()
-        .find(|k| k.name().eq_ignore_ascii_case(word))
-}
-
 /// What the command line asked for: which game the lobby starts on, and
 /// whatever is to happen without waiting for the lobby.
 #[derive(Debug, PartialEq)]
@@ -91,15 +85,17 @@ enum Say {
 fn parse(args: &[&str]) -> Result<Start, Say> {
     let (verb, rest) = args.split_first().map_or(("", &[][..]), |(v, r)| (*v, r));
     // `tuitui chess` is shorthand for `tuitui play chess`.
-    let (verb, rest) = match named_game(verb) {
+    let (verb, rest) = match Kind::from_name(verb) {
         Some(_) => ("play", args),
         None => (verb, rest),
     };
 
     // Every verb but join takes a game, or none and gets the first.
     let named = || match rest {
-        [] => Ok(Kind::ALL[0]),
-        [name] => named_game(name).ok_or_else(|| Say::Wrong(format!("no game called {name:?}"))),
+        [] => Ok(Kind::DEFAULT),
+        [name] => {
+            Kind::from_name(name).ok_or_else(|| Say::Wrong(format!("no game called {name:?}")))
+        }
         [_, extra, ..] => Err(Say::Wrong(format!("unexpected {extra:?}"))),
     };
     let (game, choice) = match verb {
@@ -113,7 +109,7 @@ fn parse(args: &[&str]) -> Result<Start, Say> {
                 .join("-")
                 .parse()
                 .map_err(|e| Say::Wrong(format!("{e}")))?;
-            (Kind::ALL[0], Some(Choice::Join(code)))
+            (Kind::DEFAULT, Some(Choice::Join(code)))
         }
         "-h" | "--help" | "help" => return Err(Say::Usage),
         "-V" | "--version" | "version" => return Err(Say::Version),
@@ -187,7 +183,7 @@ mod tests {
     fn the_bare_command_opens_the_lobby() {
         assert_eq!(start(&[]).choice, None);
         assert_eq!(start(&["play"]).choice, None);
-        assert_eq!(start(&[]).game, Kind::ALL[0]);
+        assert_eq!(start(&[]).game, Kind::DEFAULT);
     }
 
     #[test]
@@ -196,14 +192,14 @@ mod tests {
             assert_eq!(
                 start(args),
                 Start {
-                    game: Kind::Chess,
+                    game: tui_tui::games::chess::KIND,
                     choice: None
                 },
                 "{args:?}"
             );
         }
         assert_eq!(start(&["local", "chess"]).choice, Some(Choice::Local));
-        assert_eq!(start(&["host", "chess"]).game, Kind::Chess);
+        assert_eq!(start(&["host", "chess"]).game, tui_tui::games::chess::KIND);
     }
 
     #[test]

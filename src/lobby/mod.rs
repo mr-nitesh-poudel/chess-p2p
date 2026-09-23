@@ -22,7 +22,7 @@ pub use ui::{LobbyGeometry, draw_lobby};
 /// Friends listed at once, most recently played first.
 pub const FRIENDS_SHOWN: usize = 6;
 
-const NAME_MAX: usize = 24;
+use crate::session::name::NAME_MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Item {

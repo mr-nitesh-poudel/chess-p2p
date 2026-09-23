@@ -126,14 +126,20 @@ position, so nobody has to trust the other's arithmetic.
 
 ## Hacking on it
 
-`hub.rs` runs the loop and knows nothing about chess. `games/` holds the
-games, each one a `Play`: take keys, clicks and the opponent's lines, and
-draw. `session/` does pairing, `lobby/` is the first screen, `profile.rs`
-remembers who you are.
+Each game lives in its own module under `games/` and implements `Play`: its
+own rules, keys and screen. It sits at a `Table`, which handles everything
+games share — leaving, the mouse, the share code, the connection — so a game
+never touches the network or quitting itself. `hub.rs` runs the loop without
+knowing which game it is running.
 
-Adding a game means a module under `games/`, a `Play` implementation and a
-line in `Kind`. Pairing, friends, invites and the lobby pick it up for free.
-`unsafe` is forbidden crate-wide, and release builds keep overflow checks on.
+Adding a game is a module, a `Play` implementation and one line in
+`Kind::ALL`. `games/mod.rs` is the contract; `tests/table.rs` proves it with a
+toy game that isn't chess.
+
+Nothing from the opponent is trusted: lines are length-capped before
+authentication, names are cleaned on arrival, and a game checks every message
+against its own state. `unsafe` is forbidden, and release builds keep overflow
+checks on.
 
 [DESIGN.md](DESIGN.md) has the long version: how the pieces are drawn, what
 the two sides say to each other, and how pairing works in detail.
