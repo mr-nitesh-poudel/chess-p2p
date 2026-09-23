@@ -7,6 +7,8 @@ you are playing. The code is not an address on somebody's server — it *is* the
 address, stretched into a keypair and looked up on a public DHT. Chess is the
 first game; the lobby, pairing and friends are shared, so more can follow.
 
+![two players, one keyboard, and a fool's mate](demo.gif)
+
 ```
 ╭───────────────── tui-tui ──────────────────╮
 │                                            │
