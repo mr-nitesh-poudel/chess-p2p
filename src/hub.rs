@@ -197,7 +197,11 @@ impl Hub {
                     }
                     Next::Stay
                 }
-                // Drawn at the top of the loop, like everything else.
+                // The game acts on it, and it is drawn at the top of the loop.
+                (Wake::Redraw, Screen::Match(m)) => {
+                    m.table.on_wake();
+                    Next::Stay
+                }
                 (Wake::Redraw, _) => Next::Stay,
                 (Wake::Heard(incoming), screen) => {
                     self.heard(incoming, screen);

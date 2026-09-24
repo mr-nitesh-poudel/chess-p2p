@@ -250,6 +250,12 @@ impl<G: Play + ?Sized> Table<G> {
         self.play.draw(f, &self.ctx);
     }
 
+    /// Background work has news: the game may act on it before the screen
+    /// is drawn again.
+    pub fn on_wake(&mut self) {
+        self.play.on_wake(&mut self.ctx);
+    }
+
     /// A key goes to the table's own question if it is asking one, then to
     /// the game, and then — if the game had no use for it — to the table.
     pub fn on_key(&mut self, key: KeyEvent) {

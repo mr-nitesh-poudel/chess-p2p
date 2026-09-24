@@ -116,6 +116,15 @@ never built in, which keeps its GPL out of this crate.
   gave away, on the curve Lichess fitted to real games: 10% is an
   inaccuracy, 20% a mistake, 30% a blunder. Positions the game is over in are
   scored by the rules, not the engine.
+- **With no engine, one can be fetched** (`download.rs`), when the player
+  says yes. It is Stockfish's own release for this machine, pinned by
+  version and SHA-256 in the source: `curl` fetches it over HTTPS only, the
+  hash is checked before anything is unpacked, and it is unpacked in a
+  staging directory that is only swapped in once the engine is found in it.
+  It lives in the data directory (`TUI_TUI_HOME` if set) with its licence,
+  and `locate` finds it after the `PATH`. Homebrew installs Stockfish as a
+  dependency instead. Moving to a new Stockfish means a new version, asset
+  names and hashes in `download.rs`.
 - **Looking back** needs no engine. `Game` keeps every position it has left;
   `,` and `.` step through them, the arrows too once the game is over, and
   the board draws the position still, with no cursor, marks or animation.

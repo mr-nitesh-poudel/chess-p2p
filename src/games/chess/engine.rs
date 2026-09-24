@@ -202,12 +202,6 @@ impl Engine {
         Ok(engine)
     }
 
-    /// Starts whichever engine [`locate`] finds.
-    pub fn find_and_start(wake: Option<Waker>) -> Result<Self, String> {
-        let path = locate().ok_or_else(|| INSTALL_HINT.to_string())?;
-        Self::start(&path, wake)
-    }
-
     /// Search this position first, and deeply.
     pub fn focus(&self, fen: String) {
         let _ = self.asks.send(Ask::Focus(fen));
@@ -234,7 +228,8 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 /// Where an engine is, if there is one: `TUITUI_ENGINE` if it is set, else
-/// `stockfish` on the `PATH` or where package managers put it.
+/// `stockfish` on the `PATH` or where package managers put it, else one
+/// downloaded earlier.
 pub fn locate() -> Option<PathBuf> {
     if let Some(named) = std::env::var_os(ENGINE_VAR).filter(|v| !v.is_empty()) {
         let named = PathBuf::from(named);
@@ -244,7 +239,7 @@ pub fn locate() -> Option<PathBuf> {
         }
         return search(named.as_os_str());
     }
-    search("stockfish".as_ref())
+    search("stockfish".as_ref()).or_else(super::download::installed)
 }
 
 fn search(name: &std::ffi::OsStr) -> Option<PathBuf> {

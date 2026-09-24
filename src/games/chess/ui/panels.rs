@@ -394,6 +394,9 @@ fn draw_state(f: &mut Frame, area: Rect, app: &App, ctx: &Ctx) {
 /// What the engine makes of the position on the screen, and where that
 /// position is when looking back. `None` to say how the game stands instead.
 fn analysis_line(app: &App) -> Option<(String, Tone)> {
+    if let Some(download) = &app.download {
+        return Some((download.progress().describe(), Tone::Wait));
+    }
     let plies = app.game.plies();
     let at = app
         .review
@@ -434,8 +437,15 @@ fn grade_style(grade: Grade) -> Style {
 
 pub(super) fn draw_footer(f: &mut Frame, area: Rect, app: &App, ctx: &Ctx) {
     let resign: &[(&str, &str)] = &[("y", "resign"), ("n", "cancel")];
-    let question = app.confirm_resign.then_some(("resign this game?", resign));
-    let analyse = if app.engine.is_some() {
+    let fetch: &[(&str, &str)] = &[("y", "download"), ("n", "not now")];
+    let offer = app.download_offer();
+    let question = match &offer {
+        Some(text) => Some((text.as_str(), fetch)),
+        None => app.confirm_resign.then_some(("resign this game?", resign)),
+    };
+    let analyse = if app.download.is_some() {
+        "cancel download"
+    } else if app.engine.is_some() {
         "stop analysing"
     } else {
         "analyse"

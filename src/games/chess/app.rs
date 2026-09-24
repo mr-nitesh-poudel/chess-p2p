@@ -7,6 +7,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, Mous
 use shakmaty::{Color, Move, Piece, Position, Role, Square};
 
 use super::analysis::Bar;
+use super::download::Download;
 use super::engine::Engine;
 use super::protocol::Msg;
 use super::rules::{Game, PROMOTION_ROLES, ui_to};
@@ -134,6 +135,10 @@ pub struct App {
     pub banner_hidden: bool,
     /// The engine, while analysis is on.
     pub engine: Option<Engine>,
+    /// Asking whether to download an engine, there being none.
+    pub offer_download: bool,
+    /// An engine being downloaded.
+    pub download: Option<Download>,
     /// The position being looked back at, as a number of moves into the
     /// game; `None` for the position now.
     pub review: Option<usize>,
@@ -159,6 +164,8 @@ impl App {
             checked: None,
             banner_hidden: false,
             engine: None,
+            offer_download: false,
+            download: None,
             review: None,
             bar: Cell::default(),
         }
@@ -431,6 +438,13 @@ impl App {
                 self.ended = Some(now.checked_sub(how.length()).unwrap_or(now));
             } else {
                 self.banner_hidden = true;
+            }
+            return Handled::Used;
+        }
+        if self.offer_download {
+            self.offer_download = false;
+            if matches!(key.code, KeyCode::Char('y') | KeyCode::Enter) {
+                self.start_download(ctx);
             }
             return Handled::Used;
         }

@@ -7,13 +7,15 @@
 //! are here, or once the game is decided. Looking back through the moves is
 //! always allowed; the moves list shows them anyway.
 
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use shakmaty::uci::UciMove;
 use shakmaty::{Color, Move, Position};
 
 use super::app::App;
-use super::engine::{Engine, Score, Status};
+use super::download::{self, Download, Progress};
+use super::engine::{self, Engine, Score, Status};
 use super::rules::Game;
 use crate::games::Ctx;
 
@@ -90,21 +92,83 @@ impl App {
     }
 
     /// Turns the engine on, starting it if there is one, or off, stopping it.
+    /// With no engine to be found, offers to download one where there is a
+    /// build for this machine. Pressed during a download, gives it up.
     pub fn toggle_analysis(&mut self, ctx: &mut Ctx) {
         if self.engine.take().is_some() {
+            return;
+        }
+        if self.download.take().is_some() {
+            ctx.note = Some("download cancelled".into());
             return;
         }
         if !self.can_analyse() {
             ctx.note = Some("analysis opens once the game is over".into());
             return;
         }
-        match Engine::find_and_start(ctx.waker.clone()) {
+        let Some(path) = engine::locate() else {
+            if download::this_build().is_some() {
+                self.offer_download = true;
+            } else {
+                ctx.note = Some(engine::INSTALL_HINT.into());
+            }
+            return;
+        };
+        self.start_engine(&path, ctx);
+    }
+
+    fn start_engine(&mut self, path: &Path, ctx: &mut Ctx) {
+        match Engine::start(path, ctx.waker.clone()) {
             Ok(engine) => {
                 self.engine = Some(engine);
                 self.feed_engine();
             }
             Err(why) => ctx.note = Some(why),
         }
+    }
+
+    /// Fetches Stockfish, once the player has said yes to it.
+    pub fn start_download(&mut self, ctx: &mut Ctx) {
+        let (Some(build), Some(home)) = (download::this_build(), download::home()) else {
+            ctx.note = Some(engine::INSTALL_HINT.into());
+            return;
+        };
+        match Download::start(build, home, ctx.waker.clone()) {
+            Ok(download) => self.download = Some(download),
+            Err(why) => ctx.note = Some(why),
+        }
+    }
+
+    /// Background work has news: a download that has finished starts the
+    /// engine it brought, and one that failed says why.
+    pub fn on_wake(&mut self, ctx: &mut Ctx) {
+        let Some(progress) = self.download.as_ref().map(Download::progress) else {
+            return;
+        };
+        match progress {
+            Progress::Done(path) => {
+                self.download = None;
+                // The game may have moved on while it downloaded.
+                if self.can_analyse() {
+                    self.start_engine(&path, ctx);
+                }
+            }
+            Progress::Failed(why) => {
+                self.download = None;
+                ctx.note = Some(why);
+            }
+            _ => {}
+        }
+    }
+
+    /// The question the footer asks while offering a download.
+    pub fn download_offer(&self) -> Option<String> {
+        let build = download::this_build().filter(|_| self.offer_download)?;
+        Some(format!(
+            "no engine found. download Stockfish {} ({} MB)?",
+            download::VERSION,
+            build.size / 1_000_000
+        ))
     }
 
     /// Tells the engine what is on the screen now, and what the whole game

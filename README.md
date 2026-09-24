@@ -101,6 +101,11 @@ graded — `?!` an inaccuracy, `?` a mistake, `??` a blunder. Step through the
 game with `,` and `.`, or the arrows once it's over. Any other UCI engine
 works too: point `TUITUI_ENGINE` at it.
 
+Installed with Homebrew, Stockfish comes with it. Otherwise, if `a` finds no
+engine it offers to download Stockfish from its official releases (about
+80 MB, once): the file is checked against a checksum pinned in tuitui before
+it's unpacked, and kept in tuitui's data folder with its licence.
+
 An engine is advice, so it isn't available during a game against someone
 else, only once it's over. Hot-seat can use it any time.
 

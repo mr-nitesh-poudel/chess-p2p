@@ -16,7 +16,13 @@ installers = ["shell", "homebrew"]
 tap = "mr-nitesh-poudel/homebrew-tap"
 formula = "tuitui"
 publish-jobs = ["homebrew"]
+
 # Target platforms to build apps for (Rust target-triple syntax)
 # Only what a GitHub runner builds natively. Windows and ARM Linux are
 # plausible but untested; add them once a CI run has proved them.
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]
+
+# Analysis runs the player's own Stockfish, so Homebrew installs it alongside.
+# Only to run with: nothing here is built against it.
+[dist.dependencies.homebrew]
+stockfish = { stage = ["run"] }

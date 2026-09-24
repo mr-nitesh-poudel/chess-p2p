@@ -53,6 +53,13 @@ pub trait Play {
         None
     }
 
+    /// Background work the game started, through [`Ctx::waker`], has news.
+    /// The screen is drawn straight after; this is the game's chance to act
+    /// on the news first.
+    fn on_wake(&mut self, ctx: &mut Ctx) {
+        let _ = ctx;
+    }
+
     /// Whether to redraw on a timer, rather than only when something happens.
     fn is_animating(&self) -> bool {
         false

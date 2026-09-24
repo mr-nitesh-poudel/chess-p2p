@@ -8,6 +8,7 @@
 pub mod analysis;
 pub mod app;
 pub mod canvas;
+pub mod download;
 pub mod engine;
 pub mod protocol;
 pub mod rules;
@@ -57,6 +58,10 @@ impl Play for App {
 
     fn chat_area(&self, ctx: &Ctx) -> Option<Rect> {
         ui::Geometry::for_game(ctx.area, ctx, self).chat
+    }
+
+    fn on_wake(&mut self, ctx: &mut Ctx) {
+        App::on_wake(self, ctx);
     }
 
     fn in_play(&self) -> bool {

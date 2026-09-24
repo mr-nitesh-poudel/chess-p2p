@@ -115,6 +115,10 @@ fn games() -> Vec<(&'static str, Table<App>)> {
     out.push(("reviewing", reviewing));
     #[cfg(unix)]
     out.push(("analysing", analysing()));
+    // Asking whether to download an engine, with a long question to fit.
+    let mut offering = Table::local(App::local());
+    offering.play.offer_download = true;
+    out.push(("offering a download", offering));
     let mut quitting = Table::local(App::local());
     quitting.ctx.confirm_leave = true;
     out.push(("quitting", quitting));
