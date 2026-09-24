@@ -27,7 +27,9 @@
 //!   otherwise exactly as sent: possibly malformed, out of turn, or hostile.
 //!   There is no referee, so the game checks every one against its own state
 //!   and ignores whatever does not fit. Nothing a peer sends may panic it.
-//! - Its own lines go out through [`Ctx::send`]. Lines starting with the
+//! - Its own lines go out through [`Ctx::send`].
+//! - Work it does in the background calls [`Ctx::waker`] when it has
+//!   something new to show, and the screen is drawn again. Lines starting with the
 //!   word `chat` are the table's: it takes them before the game sees them, so
 //!   a game must not send any of its own.
 //! - Chat is the table's too, but where it goes on the screen is the game's
@@ -44,7 +46,7 @@ mod play;
 mod table;
 
 pub use play::{Handled, Play};
-pub use table::{Conn, Ctx, Leave, Table};
+pub use table::{Conn, Ctx, Leave, Table, Waker};
 
 use crate::session;
 

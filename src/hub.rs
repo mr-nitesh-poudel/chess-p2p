@@ -34,6 +34,8 @@ pub enum Wake {
     /// A code joined, or a friend invited, for the match with this id.
     Paired(u64, Result<Link, String>),
     Net(u64, NetEvent),
+    /// Something working in the background has news to draw.
+    Redraw,
 }
 
 enum Screen {
@@ -195,6 +197,8 @@ impl Hub {
                     }
                     Next::Stay
                 }
+                // Drawn at the top of the loop, like everything else.
+                (Wake::Redraw, _) => Next::Stay,
                 (Wake::Heard(incoming), screen) => {
                     self.heard(incoming, screen);
                     Next::Stay
@@ -306,7 +310,16 @@ impl Hub {
         Next::Go(Screen::Match(m))
     }
 
-    fn new_match(&mut self, table: Box<Table<dyn Play>>, by_listener: bool) -> Match {
+    /// For a game's background work to have the screen drawn again.
+    fn redraw(&self) -> tui_tui::games::Waker {
+        let wake = self.wake.clone();
+        std::sync::Arc::new(move || {
+            let _ = wake.send(Wake::Redraw);
+        })
+    }
+
+    fn new_match(&mut self, mut table: Box<Table<dyn Play>>, by_listener: bool) -> Match {
+        table.set_waker(self.redraw());
         self.next_match += 1;
         Match {
             id: self.next_match,
@@ -437,6 +450,7 @@ impl Hub {
             && kind != m.table.kind()
         {
             m.table = kind.start(Seat::Guest, Ctx::new(Conn::Dialling, None));
+            m.table.set_waker(self.redraw());
         }
         if let Err(e) = self.profile.played(link.peer, &link.peer_name) {
             self.notice = Some(format!("could not save your friends: {e:#}"));

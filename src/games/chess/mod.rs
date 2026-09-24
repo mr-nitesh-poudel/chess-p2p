@@ -5,8 +5,10 @@
 //! This is the whole of chess's connection to the rest of the program: a
 //! [`Descriptor`] for the registry, and [`Play`] for the table.
 
+pub mod analysis;
 pub mod app;
 pub mod canvas;
+pub mod engine;
 pub mod protocol;
 pub mod rules;
 pub mod ui;
@@ -54,7 +56,7 @@ impl Play for App {
     }
 
     fn chat_area(&self, ctx: &Ctx) -> Option<Rect> {
-        ui::Geometry::of(ctx.area, ctx).chat
+        ui::Geometry::for_game(ctx.area, ctx, self).chat
     }
 
     fn in_play(&self) -> bool {

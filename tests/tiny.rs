@@ -106,10 +106,50 @@ fn games() -> Vec<(&'static str, Table<App>)> {
     chatting.ctx.chat.scroll = 1000;
     chatting.ctx.chat.input = "x".repeat(400);
     out.push(("chatting", chatting));
+    // Looking back, and analysing with an engine that has a score in.
+    let mut reviewing = Table::local(App::local());
+    for m in ["e2e4", "e7e5", "g1f3"] {
+        reviewing.play.game.play_uci(m).unwrap();
+    }
+    reviewing.play.review = Some(1);
+    out.push(("reviewing", reviewing));
+    #[cfg(unix)]
+    out.push(("analysing", analysing()));
     let mut quitting = Table::local(App::local());
     quitting.ctx.confirm_leave = true;
     out.push(("quitting", quitting));
     out
+}
+
+/// A game being analysed, by an engine that answers with a score and a best
+/// move for every position, once it has had a moment to.
+#[cfg(unix)]
+fn analysing() -> Table<App> {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("tuitui-{}-tiny", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("engine");
+    let script = "#!/bin/sh\nwhile read -r l; do case \"$l\" in uci) echo uciok;; go*) echo \"info depth 20 score mate -3 pv e7e5\"; echo bestmove e7e5;; quit) exit;; esac; done\n";
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    // The engine's task outlives this function on a runtime kept for the
+    // rest of the test run.
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    let runtime = RUNTIME.get_or_init(|| tokio::runtime::Runtime::new().unwrap());
+    let _entered = runtime.enter();
+    let mut t = Table::local(App::local());
+    t.play.game.play_uci("e2e4").unwrap();
+    t.play.engine = Some(tui_tui::games::chess::engine::Engine::start(&path, None).unwrap());
+    t.play.feed_engine();
+    for _ in 0..300 {
+        if t.play.best_move().is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(t.play.best_move().is_some(), "the engine answered");
+    t
 }
 
 #[test]

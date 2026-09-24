@@ -1,10 +1,13 @@
 //! A game of chess in progress, and what a key, click or message does to it.
 
+use std::cell::Cell;
 use std::time::{Duration, Instant};
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use shakmaty::{Color, Move, Piece, Position, Role, Square};
 
+use super::analysis::Bar;
+use super::engine::Engine;
 use super::protocol::Msg;
 use super::rules::{Game, PROMOTION_ROLES, ui_to};
 use super::ui::{Geometry, PieceStyle};
@@ -90,6 +93,8 @@ pub enum Tone {
     Alert,
     /// The game is decided.
     Done,
+    /// What the engine says.
+    Engine,
 }
 
 fn side_name(c: Color) -> &'static str {
@@ -127,6 +132,13 @@ pub struct App {
     pub checked: Option<Instant>,
     /// The verdict has been waved away, to look at the board.
     pub banner_hidden: bool,
+    /// The engine, while analysis is on.
+    pub engine: Option<Engine>,
+    /// The position being looked back at, as a number of moves into the
+    /// game; `None` for the position now.
+    pub review: Option<usize>,
+    /// The evaluation bar, easing from one score to the next.
+    pub bar: Cell<Bar>,
 }
 
 impl App {
@@ -146,6 +158,9 @@ impl App {
             ended: None,
             checked: None,
             banner_hidden: false,
+            engine: None,
+            review: None,
+            bar: Cell::default(),
         }
     }
 
@@ -188,7 +203,7 @@ impl App {
             .is_some_and(|(at, how)| now < at + how.length());
         let check =
             self.check_glow().is_some() && self.checked.is_some_and(|at| now < at + CHECK_PULSE);
-        self.slide_at().is_some() || finale || check
+        self.slide_at().is_some() || finale || check || self.bar_moving()
     }
 
     /// How the game was lost, if it was.
@@ -328,6 +343,7 @@ impl App {
         } else if self.game.pos.is_check() {
             self.checked = Some(self.now() + SLIDE);
         }
+        self.feed_engine();
         let to = ui_to(m);
         let (Some(from), Some(piece)) = (m.from(), self.game.piece_at(to)) else {
             return;
@@ -429,7 +445,25 @@ impl App {
             return Handled::Used;
         }
 
+        // Looking back: the arrows once the game is over and the cursor has
+        // nothing to do, and , and . at any time.
+        let over = !self.in_play();
         match key.code {
+            KeyCode::Char('a') => self.toggle_analysis(ctx),
+            KeyCode::Char(',') => self.step(-1),
+            KeyCode::Char('.') => self.step(1),
+            KeyCode::Left | KeyCode::Char('h') if over => self.step(-1),
+            KeyCode::Right | KeyCode::Char('l') if over => self.step(1),
+            KeyCode::Up | KeyCode::Char('k') if over => self.review_at(0),
+            KeyCode::Down | KeyCode::Char('j') if over => self.review_at(self.game.plies()),
+            KeyCode::Home => self.review_at(0),
+            KeyCode::End => self.review_at(self.game.plies()),
+            // Esc comes back to the game before it means leaving it.
+            KeyCode::Esc if self.review.is_some() => self.review_at(self.game.plies()),
+            // Picking a piece up comes back to the game too, and does no more.
+            KeyCode::Enter | KeyCode::Char(' ') if self.review.is_some() => {
+                self.review_at(self.game.plies());
+            }
             // Esc puts a piece down before it means leaving.
             KeyCode::Esc if self.game.selected.is_some() => self.game.selected = None,
             KeyCode::Char('f') => self.flipped = !self.flipped,
@@ -555,7 +589,7 @@ impl App {
     }
 
     pub fn on_mouse(&mut self, ev: MouseEvent, ctx: &mut Ctx) {
-        let g = Geometry::of(ctx.area, ctx);
+        let g = Geometry::for_game(ctx.area, ctx, self);
         if self.banner_showing() && matches!(ev.kind, MouseEventKind::Down(_)) {
             self.banner_hidden = true;
             return;
@@ -593,6 +627,13 @@ impl App {
         }
         if self.confirm_resign {
             self.confirm_resign = false;
+            return;
+        }
+        // A click on the board while looking back comes back to the game.
+        if self.review.is_some() {
+            if g.square_at(x, y, self.flipped).is_some() {
+                self.review_at(self.game.plies());
+            }
             return;
         }
 

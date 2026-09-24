@@ -5,6 +5,7 @@
 //! What is drawn and what can be clicked both come from [`Geometry`], so the
 //! two cannot drift apart.
 
+mod bar;
 mod board;
 mod panels;
 mod pieces;
@@ -14,6 +15,7 @@ use ratatui::prelude::*;
 
 use shakmaty::{Color as Side, File, Rank, Square};
 
+use bar::draw_bar;
 use board::{draw_board, draw_slide};
 use panels::{draw_footer, draw_promotion, draw_sidebar, draw_verdict};
 
@@ -96,6 +98,10 @@ const CHAT_MAX: u16 = 48;
 /// board and it goes under the moves instead: a message and the composer.
 const CHAT_MIN_H: u16 = 6;
 
+/// The evaluation bar's column, left of the board: a space either side of a
+/// bar three wide, which is room for a score like `1.3` or `M4`.
+const BAR_W: u16 = 5;
+
 /// Where everything sits this frame.
 pub struct Geometry {
     pub board: Rect,
@@ -107,6 +113,8 @@ pub struct Geometry {
     /// Right of the board where there is room, else under the moves. `None`
     /// in hot-seat, and on a screen too small for it.
     pub chat: Option<Rect>,
+    /// The evaluation bar, beside the ranks, while analysis is on.
+    pub eval: Option<Rect>,
     pub footer: Rect,
     pub promo: Rect,
     pub promo_cell: u16,
@@ -115,34 +123,46 @@ pub struct Geometry {
 impl Geometry {
     /// The layout for a game with nobody to talk to.
     pub fn new(area: Rect) -> Self {
-        Self::layout(area, false)
+        Self::layout(area, false, false)
     }
 
     /// The layout for the game at this table: with the chat, unless it is
     /// hot-seat.
     pub fn of(area: Rect, ctx: &Ctx) -> Self {
-        Self::layout(area, ctx.has_chat())
+        Self::layout(area, ctx.has_chat(), false)
+    }
+
+    /// The layout for this game at this table: with the chat, unless it is
+    /// hot-seat, and the evaluation bar while analysis is on.
+    pub fn for_game(area: Rect, ctx: &Ctx, app: &App) -> Self {
+        Self::layout(area, ctx.has_chat(), app.engine.is_some())
     }
 
     /// Picks the biggest board that leaves room for the sidebar, and centres
     /// it on the screen. The sidebar sits to its left, or pushes it right of
     /// centre where there is not room for both. The chat, if `chat`, takes
     /// the room to the board's right; the board is never shrunk for it, so
-    /// where there is not room it goes under the moves instead.
-    pub fn layout(area: Rect, chat: bool) -> Self {
+    /// where there is not room it goes under the moves instead. The bar, if
+    /// `bar`, goes between the sidebar and the board.
+    pub fn layout(area: Rect, chat: bool, bar: bool) -> Self {
+        let bar_w = if bar { BAR_W } else { 0 };
         let [main, footer] =
             Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
 
         let mut cell = CELL_SIZES[0];
         for candidate in CELL_SIZES {
             let (w, h) = (block_w(candidate.0), block_h(candidate.1));
-            if w + SIDEBAR_MIN <= main.width && h <= main.height {
+            if w + bar_w + SIDEBAR_MIN <= main.width && h <= main.height {
                 cell = candidate;
             }
         }
         let (cw, ch) = cell;
 
-        let (col_w, col_h) = (block_w(cw).min(main.width), block_h(ch).min(main.height));
+        // The board, with the bar beside it.
+        let (col_w, col_h) = (
+            (block_w(cw) + bar_w).min(main.width),
+            block_h(ch).min(main.height),
+        );
         let spare = main.width - col_w;
         let beside = chat && spare >= SIDEBAR_MIN + CHAT_MIN;
         let (side_w, chat_w) = if beside {
@@ -190,7 +210,12 @@ impl Geometry {
         } else {
             None
         };
-        let board = left;
+        let board_w = col_w.saturating_sub(bar_w);
+        let board = Rect {
+            x: left.x + (col_w - board_w),
+            width: board_w,
+            ..left
+        };
 
         let grid = Rect {
             x: board.x + 1 + GUTTER,
@@ -198,6 +223,17 @@ impl Geometry {
             width: 8 * cw,
             height: 8 * ch,
         };
+
+        // Level with the ranks, so its middle is the middle of the board.
+        let eval = (bar && board.x >= left.x + BAR_W).then(|| {
+            Rect {
+                x: left.x + 1,
+                y: grid.y,
+                width: BAR_W - 2,
+                height: 8 * ch,
+            }
+            .intersection(main)
+        });
 
         // The prompt shows four pieces at roughly board scale.
         let promo_cell = cw.clamp(5, 9);
@@ -209,6 +245,7 @@ impl Geometry {
             cell,
             sidebar,
             chat,
+            eval,
             footer,
             promo,
             promo_cell,
@@ -251,11 +288,24 @@ fn block_h(cell_h: u16) -> u16 {
 }
 
 pub fn draw(f: &mut Frame, app: &App, ctx: &Ctx) {
-    let g = Geometry::of(f.area(), ctx);
+    let g = Geometry::for_game(f.area(), ctx, app);
 
-    draw_board(f, &g, app);
-    if let Some((slide, t)) = app.slide_at() {
+    // Looking back draws that position, still; otherwise the game as it is.
+    let reviewed = app.reviewed();
+    let live = reviewed.is_none();
+    draw_board(
+        f,
+        &g,
+        app,
+        reviewed.as_ref().unwrap_or(&app.game),
+        live,
+        app.best_move(),
+    );
+    if live && let Some((slide, t)) = app.slide_at() {
         draw_slide(f.buffer_mut(), &g, app, slide, t);
+    }
+    if let Some(area) = g.eval {
+        draw_bar(f.buffer_mut(), area, app);
     }
     draw_sidebar(f, g.sidebar, app, ctx);
     if let Some(area) = g.chat {
@@ -266,7 +316,8 @@ pub fn draw(f: &mut Frame, app: &App, ctx: &Ctx) {
     if app.game.promotion.is_some() {
         draw_promotion(f, &g, app);
     }
-    if let Some(fin) = app.finale()
+    if live
+        && let Some(fin) = app.finale()
         && let Some(reveal) = fin.banner
     {
         draw_verdict(f, &g, app, ctx, &fin, reveal);

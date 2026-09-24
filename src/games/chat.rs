@@ -194,7 +194,13 @@ pub fn draw(f: &mut Frame, area: Rect, ctx: &Ctx) {
     }
     let width = usize::from(inner.width);
 
-    let composer = composer_lines(ctx, width);
+    // The composer keeps its last rows, and leaves room for the rule and a
+    // row of the log however short the panel is.
+    let mut composer = composer_lines(ctx, width);
+    let room = usize::from(inner.height - 2);
+    if composer.len() > room {
+        composer.drain(..composer.len() - room);
+    }
     let composer_h = composer.len() as u16;
     let log_h = inner.height - composer_h - 1;
 

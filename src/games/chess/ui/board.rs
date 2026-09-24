@@ -3,7 +3,7 @@
 
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Paragraph};
-use shakmaty::{Color as Side, File, Piece, Rank, Square};
+use shakmaty::{Color as Side, File, Move, Piece, Rank, Square};
 
 use super::pieces::{Pixel, ink, piece_cell, sprite_for, sprite_origin};
 use super::{
@@ -12,19 +12,34 @@ use super::{
 };
 use crate::games::chess::app::{App, Finale, Slide};
 use crate::games::chess::canvas::{self, Dots};
+use crate::games::chess::rules::{Game, ui_to};
 use crate::ui::{CURSOR, MUTED, SELECTED, blend};
 
-pub(super) fn draw_board(f: &mut Frame, g: &Geometry, app: &App) {
+/// The board as `game` has it. `live` is the game being played, with its
+/// cursor, the moves the piece picked up can make, and whatever is moving;
+/// anything else is a position being looked back at, drawn still. `hint` is
+/// a move to point out: the engine's best.
+/// The engine's best move, pointed out in blue.
+const HINT: Color = Color::Rgb(72, 146, 214);
+
+pub(super) fn draw_board(
+    f: &mut Frame,
+    g: &Geometry,
+    app: &App,
+    game: &Game,
+    live: bool,
+    hint: Option<Move>,
+) {
     let (cw, ch) = g.cell;
-    let game = &app.game;
-    let targets = game.targets();
+    let targets = if live { game.targets() } else { Vec::new() };
     let style = app.piece_style;
     let mut lines = Vec::with_capacity(usize::from(8 * ch + 1));
 
     // Whatever is sliding is drawn on top afterwards, not in place.
-    let travelling = app.slide_at().map(|(s, _)| s.to);
-    let finale = app.finale();
-    let check = app.check_glow();
+    let travelling = app.slide_at().filter(|_| live).map(|(s, _)| s.to);
+    let finale = app.finale().filter(|_| live);
+    let check = app.check_glow().filter(|_| live);
+    let hint = hint.map(|m| (m.from().unwrap_or_else(|| m.to()), ui_to(m)));
 
     for row in 0..8u32 {
         let rank = if app.flipped { row } else { 7 - row };
@@ -53,10 +68,17 @@ pub(super) fn draw_board(f: &mut Frame, g: &Geometry, app: &App) {
                     (true, true) => DARK_LAST,
                     (false, true) => LIGHT_LAST,
                 };
+                if let Some((from, to)) = hint {
+                    if sq == from {
+                        bg = blend(bg, HINT, 0.35);
+                    } else if sq == to {
+                        bg = blend(bg, HINT, 0.6);
+                    }
+                }
                 if game.selected == Some(sq) {
                     bg = blend(bg, SELECTED, 0.8);
                 }
-                if sq == game.cursor {
+                if live && sq == game.cursor {
                     bg = blend(bg, CURSOR, 0.5);
                 }
                 if let Some((king, glow)) = check

@@ -40,8 +40,14 @@ other. Written for whoever works on this next, including me in six months.
     into state changes. `ui/` draws with [`ratatui`], reading state and never
     writing it: `board.rs` for the squares and what stands on them, `pieces.rs`
     for how a piece is drawn at a given size, `panels.rs` for everything
-    around the board. `canvas.rs` holds the silhouettes, and `protocol.rs` is
-    what the two sides say: `move e2e4`, `resign`, `draw`.
+    around the board, `bar.rs` for the evaluation bar. `canvas.rs` holds the
+    silhouettes, and `protocol.rs` is what the two sides say: `move e2e4`,
+    `resign`, `draw`. `engine.rs` runs an engine and `analysis.rs` is what is
+    made of it; see [Analysis](#analysis).
+  - `chat.rs` is the players talking, and it is the table's: a line starting
+    `chat ` is taken before the game sees it, and cleaned of control
+    characters. Where the panel sits is the game's call, reported through
+    `Play::chat_area` so clicks land on it.
 - **`lobby/`** — the first screen: the game, the menu, the code box with its
   completion, and friends.
 - **`hub.rs`** — the main loop. It pairs players, answers invites, and hands
@@ -70,7 +76,10 @@ game, and nothing the peer sends is taken on trust:
 - **Lines are bounded.** A peer's line is read at most 4 KiB at a time
   (`session/lines.rs`). Without that, anyone who can dial us — in the lobby,
   anyone who knows our endpoint id, before proving anything — could send one
-  endless line and exhaust our memory.
+  endless line and exhaust our memory. The reader is also cancel safe: it
+  races our own sends in `select!`, and a read given up on keeps the part of
+  a line it had rather than dropping it, which would split the next message
+  in two. The engine's output goes through the same reader.
 - **Names are cleaned where they arrive** (`session/name.rs`): no control
   characters, 24 characters at most.
 - **A game checks every message against its own state.** In chess, a move is
@@ -78,6 +87,38 @@ game, and nothing the peer sends is taken on trust:
   legal move for *our* side — and a finished game takes no more messages, so
   a late `resign` cannot overturn a checkmate. Messages are matched exactly:
   `resign please` is not a resignation.
+
+## Analysis
+
+`a` runs an engine over the position on the screen: Stockfish, or anything
+that speaks UCI, found on the `PATH`, where Homebrew and Debian put it, or at
+`TUITUI_ENGINE`. It is the player's own program, run as a child process and
+never built in, which keeps its GPL out of this crate.
+
+- **One task owns the process** (`engine.rs`). The game sends it the
+  position on the screen, searched first and deeply, and the whole game,
+  searched quickly after, to grade the moves. Results go into a table keyed
+  by FEN that the drawing reads, and the task wakes the main loop through
+  `Ctx::waker` rather than having it poll. Scores come back for the side to
+  move and are turned round to be white's.
+- **Nothing the engine prints is trusted.** Unparseable lines are skipped,
+  scores are held in range so no sum on them can overflow, lines are bounded,
+  writes to it time out, and a best move is only shown if it is legal. An
+  engine that dies turns into a message, not a crash. When analysis is
+  switched off, or the game is left, the engine is told to quit, then killed
+  and waited for, so nothing is left running.
+- **Not while a game against someone is on.** An engine's opinion is advice,
+  so the key does nothing in a network game until it is decided; hot-seat,
+  with both players at the keyboard, may analyse whenever. This is a
+  courtesy, not a guarantee: with no referee, nothing stops a modified
+  client, or a second window, from consulting an engine.
+- **Grades** (`analysis.rs`) are by how much of the mover's chances a move
+  gave away, on the curve Lichess fitted to real games: 10% is an
+  inaccuracy, 20% a mistake, 30% a blunder. Positions the game is over in are
+  scored by the rules, not the engine.
+- **Looking back** needs no engine. `Game` keeps every position it has left;
+  `,` and `.` step through them, the arrows too once the game is over, and
+  the board draws the position still, with no cursor, marks or animation.
 
 ## Pieces
 

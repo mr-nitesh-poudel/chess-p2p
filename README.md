@@ -80,6 +80,8 @@ down. The keyboard does everything too:
 | `c` | copy your share code |
 | `r` / `d` | resign / offer a draw |
 | `t` | chat with your opponent (or click the chat panel); `enter` sends, `esc` goes back to the board |
+| `a` | analyse with an engine: an evaluation bar, the best move, and each move graded (hot-seat, or once a game is over) |
+| `,` / `.` | step back and forward through the game (the arrows too, once it is over); `esc` comes back |
 | `q` / `esc` | leave (it asks first) |
 
 Promotion opens a prompt: click, or `←`/`→` and `enter`, or just press
@@ -89,6 +91,18 @@ Checkmate is not a status line. The board goes dark, the square flashes red,
 and the losing king topples over away from whatever mated it before the
 verdict is spelled out across the board. Resigning lays your king down gently
 instead. Any key puts the board back.
+
+## Analysis
+
+With [Stockfish](https://stockfishchess.org) installed (`brew install
+stockfish`, `apt install stockfish`), `a` analyses the game: an evaluation bar
+beside the board, the engine's best move lit up in blue, and every move
+graded — `?!` an inaccuracy, `?` a mistake, `??` a blunder. Step through the
+game with `,` and `.`, or the arrows once it's over. Any other UCI engine
+works too: point `TUITUI_ENGINE` at it.
+
+An engine is advice, so it isn't available during a game against someone
+else, only once it's over. Hot-seat can use it any time.
 
 ## Friends
 

@@ -5,11 +5,13 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph, Wrap};
+use shakmaty::san::SanPlus;
 use shakmaty::{Color as Side, Piece, Position, Role};
 
 use super::board::{canvas_dots, canvas_piece};
 use super::pieces::piece_cell;
 use super::{FLASH, Geometry, LIGHT, MATE_RED, PieceStyle, VERDICT_BG, side_name};
+use crate::games::chess::analysis::{Grade, Thinking};
 use crate::games::chess::app::{App, Ending, Finale, Tone};
 use crate::games::chess::canvas;
 use crate::games::chess::rules::PROMOTION_ROLES;
@@ -34,6 +36,9 @@ fn tone_style(tone: Tone) -> Style {
             .bg(Color::Rgb(88, 26, 22))
             .fg(Color::Rgb(255, 128, 108)),
         Tone::Done => bold.bg(Color::Rgb(48, 44, 40)).fg(BRIGHT),
+        Tone::Engine => bold
+            .bg(Color::Rgb(26, 50, 74))
+            .fg(Color::Rgb(156, 204, 246)),
     }
 }
 
@@ -301,7 +306,9 @@ fn draw_moves(f: &mut Frame, area: Rect, app: &App) {
         .bg(HIGHLIGHT)
         .add_modifier(Modifier::BOLD);
     let letters = matches!(app.piece_style, PieceStyle::Letter | PieceStyle::BigLetter);
-    let last = app.game.history.len().checked_sub(1);
+    // The move into the position on the screen.
+    let marked = app.shown_ply().checked_sub(1);
+    let grades = app.engine.is_some();
 
     let mut lines: Vec<Line> = app
         .game
@@ -312,15 +319,21 @@ fn draw_moves(f: &mut Frame, area: Rect, app: &App) {
             let mut spans = vec![Span::styled(format!("{:>3}. ", i + 1), muted)];
             for (j, san) in pair.iter().enumerate() {
                 let side = if j == 0 { Side::White } else { Side::Black };
+                let ply = 2 * i + j;
                 let text = written(san, side, letters);
-                let style = if Some(2 * i + j) == last {
+                let style = if Some(ply) == marked {
                     latest
                 } else {
                     Style::default().fg(QUIET)
                 };
-                spans.push(Span::styled(text.clone(), style));
+                let mut width = text.chars().count();
+                spans.push(Span::styled(text, style));
+                if let Some(grade) = app.grade(ply).filter(|_| grades) {
+                    width += grade.symbol().len();
+                    spans.push(Span::styled(grade.symbol(), grade_style(grade)));
+                }
                 if j == 0 {
-                    let pad = 8usize.saturating_sub(text.chars().count());
+                    let pad = 10usize.saturating_sub(width);
                     spans.push(Span::raw(" ".repeat(pad)));
                 }
             }
@@ -340,11 +353,22 @@ fn draw_moves(f: &mut Frame, area: Rect, app: &App) {
         ]));
     }
 
-    // Keep the tail of the game visible, and say how much is above it.
+    // Keep the tail of the game visible, or the move being looked back at,
+    // and say how much is above it.
     if lines.len() > inner_h && inner_h > 1 {
-        let hidden = lines.len() - (inner_h - 1);
+        let end = match (app.review, marked) {
+            (Some(_), Some(ply)) => (ply / 2 + 1).max(inner_h - 1).min(lines.len()),
+            (Some(_), None) => inner_h - 1,
+            (None, _) => lines.len(),
+        };
+        let hidden = end - (inner_h - 1);
+        lines.truncate(end);
         lines.drain(..hidden);
-        lines.insert(0, Line::styled(format!("↑ {hidden} earlier"), muted));
+        if hidden > 0 {
+            lines.insert(0, Line::styled(format!("↑ {hidden} earlier"), muted));
+        } else {
+            lines.truncate(inner_h);
+        }
     }
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
@@ -352,7 +376,7 @@ fn draw_moves(f: &mut Frame, area: Rect, app: &App) {
 /// Where the game stands, on a band of colour that says how much it
 /// matters. A draw offer carries the key that accepts it.
 fn draw_state(f: &mut Frame, area: Rect, app: &App, ctx: &Ctx) {
-    let (text, tone) = app.state_line(ctx);
+    let (text, tone) = analysis_line(app).unwrap_or_else(|| app.state_line(ctx));
     let style = tone_style(tone);
     let text = if tone == Tone::Alert {
         text.to_uppercase()
@@ -367,23 +391,86 @@ fn draw_state(f: &mut Frame, area: Rect, app: &App, ctx: &Ctx) {
     f.render_widget(Paragraph::new(Line::from(spans).centered()), area);
 }
 
+/// What the engine makes of the position on the screen, and where that
+/// position is when looking back. `None` to say how the game stands instead.
+fn analysis_line(app: &App) -> Option<(String, Tone)> {
+    let plies = app.game.plies();
+    let at = app
+        .review
+        .map(|ply| format!("{ply}/{plies} · "))
+        .unwrap_or_default();
+    let (text, tone) = match app.thinking() {
+        None | Some(Thinking::Decided(_)) => {
+            let ply = app.review?;
+            return Some((format!("move {ply} of {plies}"), Tone::Wait));
+        }
+        Some(Thinking::Starting) => ("starting the engine…".into(), Tone::Wait),
+        Some(Thinking::Failed(why)) => (why, Tone::Warn),
+        Some(Thinking::Searching) => ("thinking…".into(), Tone::Wait),
+        Some(Thinking::Found { score, depth, best }) => {
+            let letters = matches!(app.piece_style, PieceStyle::Letter | PieceStyle::BigLetter);
+            let pos = app.game.position_at(app.shown_ply());
+            let best = best.map_or(String::new(), |m| {
+                let san = SanPlus::from_move(pos.clone(), m).to_string();
+                format!("  best {}", written(&san, pos.turn(), letters))
+            });
+            (
+                format!("{}{best}  depth {depth}", score.signed()),
+                Tone::Engine,
+            )
+        }
+    };
+    Some((format!("{at}{text}"), tone))
+}
+
+fn grade_style(grade: Grade) -> Style {
+    let colour = match grade {
+        Grade::Inaccuracy => Color::Rgb(232, 200, 92),
+        Grade::Mistake => Color::Rgb(236, 142, 60),
+        Grade::Blunder => Color::Rgb(232, 64, 52),
+    };
+    Style::default().fg(colour).add_modifier(Modifier::BOLD)
+}
+
 pub(super) fn draw_footer(f: &mut Frame, area: Rect, app: &App, ctx: &Ctx) {
     let resign: &[(&str, &str)] = &[("y", "resign"), ("n", "cancel")];
     let question = app.confirm_resign.then_some(("resign this game?", resign));
+    let analyse = if app.engine.is_some() {
+        "stop analysing"
+    } else {
+        "analyse"
+    };
+    let over = !app.in_play();
+    // The most useful first, as the narrowest screens keep only those.
     let keys: Vec<(&str, &str)> = if app.game.promotion.is_some() {
         vec![
             ("click/←→", "choose"),
             ("enter", "promote"),
             ("esc", "cancel"),
         ]
-    } else {
-        // The most useful first, as the narrowest screens keep only those.
-        let mut keys = vec![];
-        if app.in_play() {
-            keys.extend([("click", "move"), ("r", "resign"), ("d", "draw")]);
+    } else if app.review.is_some() {
+        let mut keys = vec![(if over { "←/→" } else { ",/." }, "step")];
+        if app.can_analyse() {
+            keys.push(("a", analyse));
         }
+        keys.push(("esc", "back to the game"));
+        keys
+    } else if over {
+        vec![
+            ("←/→", "replay"),
+            ("a", analyse),
+            ("f", "flip"),
+            ("p", "pieces"),
+            ("m", "mouse"),
+            ("q", "lobby"),
+        ]
+    } else {
+        let mut keys = vec![("click", "move"), ("r", "resign"), ("d", "draw")];
         if ctx.has_chat() {
             keys.push(("t", "chat"));
+        }
+        if app.can_analyse() {
+            keys.push(("a", analyse));
         }
         keys.extend([
             ("f", "flip"),

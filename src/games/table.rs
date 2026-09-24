@@ -1,6 +1,8 @@
 //! The table a game is played at: the connection to the opponent, and
 //! everything about playing that is the same whatever the game.
 
+use std::sync::Arc;
+
 use iroh::EndpointId;
 use ratatui::Frame;
 use ratatui::crossterm::event::{
@@ -32,6 +34,9 @@ pub enum Conn {
     Playing,
     Lost(String),
 }
+
+/// Asks for the screen to be drawn again, from anywhere, on any thread.
+pub type Waker = Arc<dyn Fn() + Send + Sync>;
 
 /// Where a game is going once the player is done with it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,6 +72,9 @@ pub struct Ctx {
     pub confirm_leave: bool,
     /// What the two players have said to each other.
     pub chat: Chat,
+    /// For a game's background work to have the screen drawn again. `None`
+    /// where nothing is drawing, as in a test.
+    pub waker: Option<Waker>,
 }
 
 impl Ctx {
@@ -91,6 +99,7 @@ impl Ctx {
             mouse: true,
             confirm_leave: false,
             chat: Chat::default(),
+            waker: None,
         }
     }
 
@@ -217,6 +226,10 @@ impl<G: Play + ?Sized> Table<G> {
 
     pub fn is_animating(&self) -> bool {
         self.play.is_animating()
+    }
+
+    pub fn set_waker(&mut self, waker: Waker) {
+        self.ctx.waker = Some(waker);
     }
 
     pub fn set_area(&mut self, area: Rect) {

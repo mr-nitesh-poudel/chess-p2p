@@ -4,9 +4,12 @@
 //! code over their own copy of the position, so a peer that sends an illegal
 //! move simply gets it rejected rather than corrupting the game.
 
+use shakmaty::fen::Fen;
 use shakmaty::san::SanPlus;
 use shakmaty::uci::UciMove;
-use shakmaty::{CastlingMode, Chess, Color, File, Move, Piece, Position, Rank, Role, Square};
+use shakmaty::{
+    CastlingMode, Chess, Color, EnPassantMode, File, Move, Piece, Position, Rank, Role, Square,
+};
 
 pub const CASTLING: CastlingMode = CastlingMode::Standard;
 
@@ -43,6 +46,9 @@ pub struct Game {
     pub selected: Option<Square>,
     /// SAN of every move played, for the move list.
     pub history: Vec<String>,
+    /// Every position the game has left, with the move that left it, for
+    /// looking back.
+    pub past: Vec<(Chess, Move)>,
     /// Squares of the last move, highlighted on the board.
     pub last: Option<(Square, Square)>,
     pub promotion: Option<Promotion>,
@@ -63,6 +69,7 @@ impl Game {
             cursor: Square::E2,
             selected: None,
             history: Vec::new(),
+            past: Vec::new(),
             last: None,
             promotion: None,
             resigned: None,
@@ -169,6 +176,7 @@ impl Game {
     pub fn play(&mut self, m: Move) {
         let san = SanPlus::from_move(self.pos.clone(), m).to_string();
         self.history.push(san);
+        self.past.push((self.pos.clone(), m));
         self.last = Some((m.from().unwrap_or_else(|| m.to()), ui_to(m)));
         self.pos.play_unchecked(m);
         self.selected = None;
@@ -189,6 +197,48 @@ impl Game {
 
     pub fn to_uci(&self, m: Move) -> String {
         UciMove::from_move(m, CASTLING).to_string()
+    }
+
+    /// How many moves have been played, which is also the number of the
+    /// position they led to.
+    pub fn plies(&self) -> usize {
+        self.past.len()
+    }
+
+    /// The position `ply` moves into the game: 0 is the start, and
+    /// [`Game::plies`] the position now.
+    pub fn position_at(&self, ply: usize) -> &Chess {
+        self.past.get(ply).map_or(&self.pos, |(pos, _)| pos)
+    }
+
+    /// The move that led to the position `ply` moves in, if any did.
+    pub fn move_into(&self, ply: usize) -> Option<Move> {
+        ply.checked_sub(1)
+            .and_then(|i| self.past.get(i))
+            .map(|(_, m)| *m)
+    }
+
+    /// The position `ply` moves in, in the notation engines read.
+    pub fn fen_at(&self, ply: usize) -> String {
+        Fen::from_position(self.position_at(ply), EnPassantMode::Legal).to_string()
+    }
+
+    /// The game as it stood `ply` moves in, for drawing: the position and
+    /// the move into it, and nothing picked up.
+    pub fn at(&self, ply: usize) -> Game {
+        let last = self
+            .move_into(ply)
+            .map(|m| (m.from().unwrap_or_else(|| m.to()), ui_to(m)));
+        Game {
+            pos: self.position_at(ply).clone(),
+            cursor: self.cursor,
+            selected: None,
+            history: self.history[..ply.min(self.history.len())].to_vec(),
+            past: self.past[..ply.min(self.past.len())].to_vec(),
+            last,
+            promotion: None,
+            resigned: None,
+        }
     }
 
     /// Pieces of `color` that have been captured, for the material tray.
