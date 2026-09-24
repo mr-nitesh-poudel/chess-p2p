@@ -220,9 +220,9 @@ fn clicking_an_item_chooses_it() {
     assert_eq!(lobby.selected, local);
     let click = MouseEventKind::Down(MouseButton::Left);
     assert_eq!(lobby.on_mouse(mouse(click, at(host))), Some(Choice::Host));
-    // The blurb under an item is part of it.
-    let blurb = (row(local).x, row(local).y + 1);
-    assert_eq!(lobby.on_mouse(mouse(click, blurb)), Some(Choice::Local));
+    // The whole width of the menu is the item, not just its words.
+    let edge = (row(local).right() - 1, row(local).y);
+    assert_eq!(lobby.on_mouse(mouse(click, edge)), Some(Choice::Local));
 
     let alice = lobby.friends[0].id;
     let on_alice = lobby
@@ -254,7 +254,10 @@ fn every_row_has_its_own_place_on_screen() {
             );
         }
         assert!(g.rows.iter().all(|r| r.height > 0), "all fit at 80x40");
-        assert!(g.rows.last().unwrap().bottom() < g.input.y);
+        // The code is typed into the join row, and the menu clears the
+        // status bar.
+        assert_eq!(g.input, g.rows[index(&lobby, Item::Join)]);
+        assert!(g.rows.last().unwrap().bottom() <= g.status.y);
     }
 }
 
