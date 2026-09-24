@@ -11,9 +11,19 @@ use tui_tui::lobby::{self, Field, Invited, Lobby};
 
 /// Every small size, where the arithmetic is tightest, then a spread of
 /// bigger ones up to a maximised window.
+///
+/// That is half of `cargo test` on its own, so locally it takes the very
+/// smallest sizes and every third after them. CI sets `TUITUI_FULL_SWEEP` and
+/// takes every one.
 fn sizes() -> impl Iterator<Item = (u16, u16)> {
-    let widths = (0..=40).chain((41..=250).step_by(13));
-    widths.flat_map(|w| (0..=20).chain((21..=70).step_by(7)).map(move |h| (w, h)))
+    let step = if std::env::var_os("TUITUI_FULL_SWEEP").is_some() {
+        1
+    } else {
+        3
+    };
+    let small = move |to: u16| (0..=4).chain((5..=to).step_by(step));
+    let widths = small(40).chain((41..=250).step_by(13));
+    widths.flat_map(move |w| small(20).chain((21..=70).step_by(7)).map(move |h| (w, h)))
 }
 
 /// The corners, the middle, and the edges between, of a `w` by `h` screen.

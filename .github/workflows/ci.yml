@@ -1,0 +1,62 @@
+# Checks every push to main and every pull request: formatting, clippy, the
+# tests and the docs on Linux and macOS, and a build on the oldest Rust we
+# claim to support. The release workflow only builds what a tag points at;
+# this is what makes sure that is worth building.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch makes an older run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # tests/tiny.rs samples terminal sizes locally, to keep `cargo test` quick,
+  # and sweeps every one of them here.
+  TUITUI_FULL_SWEEP: "1"
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Formatting
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --all-targets
+      - name: Docs
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  msrv:
+    name: build on the oldest Rust we claim
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Keep in step with rust-version in Cargo.toml. It is set by what the
+      # dependencies need, not by this crate: shakmaty wants 1.95.
+      - uses: dtolnay/rust-toolchain@1.95
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --all-targets

@@ -2,7 +2,7 @@
 name = "tui-tui"
 version = "0.1.2"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.95"
 description = "Terminal games for two, played over a direct peer-to-peer connection"
 homepage = "https://github.com/mr-nitesh-poudel/tui-tui"
 repository = "https://github.com/mr-nitesh-poudel/tui-tui"

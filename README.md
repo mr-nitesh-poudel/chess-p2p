@@ -152,9 +152,14 @@ cargo test -- --ignored     # pairing over the real DHT, needs the internet
 cargo run --example render  # prints the UI at several sizes, for layout work
 ```
 
-One test draws and clicks every screen at every terminal size from 0x0 up to
-a maximised window, because a screen too small for a board is where the
-arithmetic gives out.
+One test draws and clicks every screen across terminal sizes from 0x0 up to a
+maximised window, because a screen too small for a board is where the
+arithmetic gives out. Locally it samples the sizes to keep `cargo test` quick;
+`TUITUI_FULL_SWEEP=1 cargo test` takes every one.
+
+CI runs all of it — formatting, clippy, tests and docs on Linux and macOS, the
+full size sweep, and a build on Rust 1.95, the oldest supported — on every
+push and pull request.
 
 ## Licence
 
