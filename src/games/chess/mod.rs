@@ -13,6 +13,7 @@ pub mod ui;
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyEvent, MouseEvent};
+use ratatui::layout::Rect;
 
 pub use app::App;
 pub use protocol::GAME;
@@ -50,6 +51,10 @@ impl Play for App {
 
     fn draw(&self, f: &mut Frame, ctx: &Ctx) {
         ui::draw(f, self, ctx);
+    }
+
+    fn chat_area(&self, ctx: &Ctx) -> Option<Rect> {
+        ui::Geometry::of(ctx.area, ctx).chat
     }
 
     fn in_play(&self) -> bool {

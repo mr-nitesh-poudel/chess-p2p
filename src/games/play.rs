@@ -2,6 +2,7 @@
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyEvent, MouseEvent};
+use ratatui::layout::Rect;
 
 use super::{Ctx, Kind};
 
@@ -43,6 +44,14 @@ pub trait Play {
     /// table asks the player first if so; once a game is decided it lets them
     /// go straight away.
     fn in_play(&self) -> bool;
+
+    /// Where [`draw`](Play::draw) puts the chat panel, if it shows one, so
+    /// the table can send it the clicks that land there. A game that draws
+    /// no chat leaves this alone, and its players cannot talk.
+    fn chat_area(&self, ctx: &Ctx) -> Option<Rect> {
+        let _ = ctx;
+        None
+    }
 
     /// Whether to redraw on a timer, rather than only when something happens.
     fn is_animating(&self) -> bool {

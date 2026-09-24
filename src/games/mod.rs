@@ -27,10 +27,17 @@
 //!   otherwise exactly as sent: possibly malformed, out of turn, or hostile.
 //!   There is no referee, so the game checks every one against its own state
 //!   and ignores whatever does not fit. Nothing a peer sends may panic it.
-//! - Its own lines go out through [`Ctx::send`].
+//! - Its own lines go out through [`Ctx::send`]. Lines starting with the
+//!   word `chat` are the table's: it takes them before the game sees them, so
+//!   a game must not send any of its own.
+//! - Chat is the table's too, but where it goes on the screen is the game's
+//!   choice: it draws the panel with [`chat::draw`] and says where with
+//!   [`Play::chat_area`], so the table can send clicks there. While the
+//!   player is typing, no keys reach the game.
 //! - [`chrome`] draws what every game's screen shares: the connection status
 //!   and the footer, with the table's own questions in it.
 
+pub mod chat;
 pub mod chess;
 pub mod chrome;
 mod play;

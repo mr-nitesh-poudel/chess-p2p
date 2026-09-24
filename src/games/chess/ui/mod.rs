@@ -19,7 +19,7 @@ use panels::{draw_footer, draw_promotion, draw_sidebar, draw_tray, draw_verdict}
 
 use super::app::App;
 use super::rules::PROMOTION_ROLES;
-use crate::games::Ctx;
+use crate::games::{Ctx, chat};
 use crate::ui::centred;
 
 pub use board::canvas_colour;
@@ -88,6 +88,12 @@ const SIDEBAR_MIN: u16 = 24;
 const SIDEBAR_MAX: u16 = 40;
 /// The fewest rows the sidebar needs: the status panel and a few moves.
 const SIDEBAR_MIN_H: u16 = 15;
+/// The chat's column, right of the board, when there is room for it.
+const CHAT_MIN: u16 = 24;
+const CHAT_MAX: u16 = 48;
+/// The fewest rows the chat can do with, when there is no room beside the
+/// board and it goes under the moves instead: a message and the composer.
+const CHAT_MIN_H: u16 = 6;
 
 /// Where everything sits this frame.
 pub struct Geometry {
@@ -97,17 +103,34 @@ pub struct Geometry {
     pub cell: (u16, u16),
     pub top_tray: Rect,
     pub bottom_tray: Rect,
+    /// The game and its moves, left of the board.
     pub sidebar: Rect,
+    /// Right of the board where there is room, else under the moves. `None`
+    /// in hot-seat, and on a screen too small for it.
+    pub chat: Option<Rect>,
     pub footer: Rect,
     pub promo: Rect,
     pub promo_cell: u16,
 }
 
 impl Geometry {
-    /// Picks the biggest board that leaves room for the sidebar, and centres
-    /// it on the screen. The sidebar sits to its right, or pushes it left of
-    /// centre where there is not room for both.
+    /// The layout for a game with nobody to talk to.
     pub fn new(area: Rect) -> Self {
+        Self::layout(area, false)
+    }
+
+    /// The layout for the game at this table: with the chat, unless it is
+    /// hot-seat.
+    pub fn of(area: Rect, ctx: &Ctx) -> Self {
+        Self::layout(area, ctx.has_chat())
+    }
+
+    /// Picks the biggest board that leaves room for the sidebar, and centres
+    /// it on the screen. The sidebar sits to its left, or pushes it right of
+    /// centre where there is not room for both. The chat, if `chat`, takes
+    /// the room to the board's right; the board is never shrunk for it, so
+    /// where there is not room it goes under the moves instead.
+    pub fn layout(area: Rect, chat: bool) -> Self {
         let [main, footer] =
             Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
 
@@ -126,19 +149,51 @@ impl Geometry {
             (block_h(ch) + 2).min(main.height),
         );
         let spare = main.width - col_w;
-        let side_w = spare.min(SIDEBAR_MAX);
+        let beside = chat && spare >= SIDEBAR_MIN + CHAT_MIN;
+        let (side_w, chat_w) = if beside {
+            // Both columns get their minimum, then share what is left.
+            let rest = spare - SIDEBAR_MIN - CHAT_MIN;
+            let side_more = (rest / 2).min(SIDEBAR_MAX - SIDEBAR_MIN);
+            let chat_more = (rest - side_more).min(CHAT_MAX - CHAT_MIN);
+            (SIDEBAR_MIN + side_more, CHAT_MIN + chat_more)
+        } else {
+            (spare.min(SIDEBAR_MAX), 0)
+        };
+        // The board in the middle of the screen, if the columns either side
+        // leave it there.
+        let board_x = (spare / 2).max(side_w).min(spare - chat_w);
         let left = Rect {
-            x: main.x + (spare / 2).min(spare - side_w),
+            x: main.x + board_x,
             y: main.y + (main.height - col_h) / 2,
             width: col_w,
             height: col_h,
         };
         let side_h = col_h.max(SIDEBAR_MIN_H).min(main.height);
-        let sidebar = Rect {
-            x: left.right(),
+        let mut sidebar = Rect {
+            x: left.x - side_w,
             y: main.y + (main.height - side_h) / 2,
             width: side_w,
             height: side_h,
+        };
+        let chat = if beside {
+            Some(Rect {
+                x: left.right(),
+                width: chat_w,
+                ..sidebar
+            })
+        } else if chat && side_w >= SIDEBAR_MIN && side_h >= SIDEBAR_MIN_H + CHAT_MIN_H {
+            // Under the moves, taking half of what the status panel leaves.
+            let below = ((side_h - 12) / 2)
+                .max(CHAT_MIN_H)
+                .min(side_h - SIDEBAR_MIN_H);
+            sidebar.height -= below;
+            Some(Rect {
+                y: sidebar.bottom(),
+                height: below,
+                ..sidebar
+            })
+        } else {
+            None
         };
         let [top_tray, board, bottom_tray] = Layout::vertical([
             Constraint::Length(1),
@@ -165,6 +220,7 @@ impl Geometry {
             top_tray,
             bottom_tray,
             sidebar,
+            chat,
             footer,
             promo,
             promo_cell,
@@ -207,7 +263,7 @@ fn block_h(cell_h: u16) -> u16 {
 }
 
 pub fn draw(f: &mut Frame, app: &App, ctx: &Ctx) {
-    let g = Geometry::new(f.area());
+    let g = Geometry::of(f.area(), ctx);
 
     let bottom_side = if app.flipped {
         Side::Black
@@ -221,6 +277,9 @@ pub fn draw(f: &mut Frame, app: &App, ctx: &Ctx) {
     }
     draw_tray(f, g.bottom_tray, app, bottom_side);
     draw_sidebar(f, g.sidebar, app, ctx);
+    if let Some(area) = g.chat {
+        chat::draw(f, area, ctx);
+    }
     draw_footer(f, g.footer, app, ctx);
 
     if app.game.promotion.is_some() {

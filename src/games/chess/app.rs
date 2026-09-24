@@ -546,7 +546,7 @@ impl App {
     }
 
     pub fn on_mouse(&mut self, ev: MouseEvent, ctx: &mut Ctx) {
-        let g = Geometry::new(ctx.area);
+        let g = Geometry::of(ctx.area, ctx);
         if self.banner_showing() && matches!(ev.kind, MouseEventKind::Down(_)) {
             self.banner_hidden = true;
             return;

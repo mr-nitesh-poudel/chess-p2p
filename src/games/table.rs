@@ -4,10 +4,11 @@
 use iroh::EndpointId;
 use ratatui::Frame;
 use ratatui::crossterm::event::{
-    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
 
+use super::chat::Chat;
 use super::{Handled, Kind, Play};
 use crate::clipboard::Copied;
 use crate::net::{Net, NetEvent};
@@ -64,6 +65,8 @@ pub struct Ctx {
     pub mouse: bool,
     /// Asked to leave a game still in play, and not answered yet.
     pub confirm_leave: bool,
+    /// What the two players have said to each other.
+    pub chat: Chat,
 }
 
 impl Ctx {
@@ -87,6 +90,7 @@ impl Ctx {
             area: Rect::new(0, 0, 80, 24),
             mouse: true,
             confirm_leave: false,
+            chat: Chat::default(),
         }
     }
 
@@ -104,6 +108,23 @@ impl Ctx {
         }
         if let Some(net) = &self.net {
             net.send(line);
+        }
+    }
+
+    /// Whether there is anyone to talk to, or will be: hot-seat has no chat.
+    pub fn has_chat(&self) -> bool {
+        self.conn != Conn::Local
+    }
+
+    /// A key while the player is typing a message. Enter sends it, if there
+    /// is someone to send it to; until then it stays where it is.
+    fn chat_key(&mut self, key: KeyEvent) {
+        if key.code == KeyCode::Enter && !self.is_networked() {
+            return;
+        }
+        if let Some(text) = self.chat.on_key(key) {
+            self.send(Chat::line(&text));
+            self.chat.said(text);
         }
     }
 
@@ -235,6 +256,10 @@ impl<G: Play + ?Sized> Table<G> {
             }
             return;
         }
+        if self.ctx.chat.focused {
+            self.ctx.chat_key(key);
+            return;
+        }
         self.ctx.note = None;
         if self.play.on_key(key, &mut self.ctx) == Handled::Used {
             return;
@@ -243,18 +268,40 @@ impl<G: Play + ?Sized> Table<G> {
             KeyCode::Char('q') | KeyCode::Esc => self.leave(),
             KeyCode::Char('m') => self.ctx.mouse = !self.ctx.mouse,
             KeyCode::Char('c') => self.ctx.copy_share(),
+            KeyCode::Char('t') if self.ctx.has_chat() => self.ctx.chat.focus(),
             _ => {}
         }
     }
 
-    /// A click while the table is asking a question dismisses it; anything
-    /// else is the game's.
+    /// A click while the table is asking a question dismisses it. A click on
+    /// the chat starts typing there, and one anywhere else stops; the wheel
+    /// over it scrolls back. Anything else is the game's.
     pub fn on_mouse(&mut self, ev: MouseEvent) {
         if self.ctx.confirm_leave {
             if matches!(ev.kind, MouseEventKind::Down(_)) {
                 self.ctx.confirm_leave = false;
             }
             return;
+        }
+        let on_chat = self
+            .play
+            .chat_area(&self.ctx)
+            .is_some_and(|a| a.contains(Position::new(ev.column, ev.row)));
+        match ev.kind {
+            MouseEventKind::Down(MouseButton::Left) if on_chat => {
+                self.ctx.chat.focus();
+                return;
+            }
+            MouseEventKind::ScrollUp if on_chat => {
+                self.ctx.chat.scroll_by(1);
+                return;
+            }
+            MouseEventKind::ScrollDown if on_chat => {
+                self.ctx.chat.scroll_by(-1);
+                return;
+            }
+            MouseEventKind::Down(_) => self.ctx.chat.blur(),
+            _ => {}
         }
         self.play.on_mouse(ev, &mut self.ctx);
     }
@@ -265,7 +312,12 @@ impl<G: Play + ?Sized> Table<G> {
                 let kind = self.kind();
                 self.ctx.on_progress(p, kind);
             }
-            NetEvent::Line(line) => self.play.on_line(&line, &mut self.ctx),
+            NetEvent::Line(line) => match Chat::parse(&line) {
+                Some(Some(text)) => self.ctx.chat.heard(text),
+                // Chat with nothing readable in it.
+                Some(None) => {}
+                None => self.play.on_line(&line, &mut self.ctx),
+            },
             NetEvent::Disconnected(why) => self.lost(why),
         }
     }

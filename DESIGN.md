@@ -22,6 +22,14 @@ other. Written for whoever works on this next, including me in six months.
     game is still in play; `m` for the mouse; `c` to copy the share code;
     Ctrl-C, which always quits and never reaches a game. The main loop holds
     a `Box<Table<dyn Play>>` and never learns which game is on it.
+  - `chat.rs` is the players talking, and it is the table's too: a line
+    starting `chat ` is taken before the game sees it, cleaned of control
+    characters, and kept. While the player is typing, keys go to the chat and
+    not the game. Where the panel sits is the game's call: it draws it with
+    `chat::draw` and reports its place through `Play::chat_area`, so clicks
+    land on it. Chess puts it right of the board, or under the moves when the
+    board would otherwise have to shrink. Older builds ignore `chat` lines,
+    so it needed no protocol bump.
   - `chrome.rs` draws what every game's screen shares: the connection status
     and the footer, with the table's own questions in it.
   - `Kind` is the registry: each game supplies a `Descriptor` (name, wire id,

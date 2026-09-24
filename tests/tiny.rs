@@ -85,6 +85,27 @@ fn games() -> Vec<(&'static str, Table<App>)> {
     let mut hosting = Table::new(Ctx::new(Conn::Waiting, None), App::new(Seat::Host));
     hosting.ctx.share = Some("42-tiger-marble-ocean".into());
     out.push(("hosting", hosting));
+    // Talking, with more said than fits and a long message half typed.
+    let (to_peer, _) = tokio::sync::mpsc::unbounded_channel();
+    let mut chatting = Table::new(Ctx::new(Conn::Dialling, None), App::new(Seat::Guest));
+    chatting.attach(
+        tui_tui::net::Net {
+            peer: iroh::SecretKey::generate().public(),
+            out: to_peer,
+        },
+        "someone with a long name",
+    );
+    for i in 0..30 {
+        chatting
+            .ctx
+            .chat
+            .heard(format!("message {i} {}", "wide 象棋 ".repeat(i)));
+        chatting.ctx.chat.said("ok".into());
+    }
+    chatting.ctx.chat.focus();
+    chatting.ctx.chat.scroll = 1000;
+    chatting.ctx.chat.input = "x".repeat(400);
+    out.push(("chatting", chatting));
     let mut quitting = Table::local(App::local());
     quitting.ctx.confirm_leave = true;
     out.push(("quitting", quitting));

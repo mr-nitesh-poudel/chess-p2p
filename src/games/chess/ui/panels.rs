@@ -126,18 +126,23 @@ pub(super) fn draw_footer(f: &mut Frame, area: Rect, app: &App, ctx: &Ctx) {
     let question = app
         .confirm_resign
         .then_some("resign this game?   y resign   n cancel");
-    chrome::footer(f, area, ctx, question, footer_keys(app, area.width));
+    chrome::footer(f, area, ctx, question, &footer_keys(app, ctx, area.width));
 }
 
-fn footer_keys(app: &App, width: u16) -> &'static str {
+fn footer_keys(app: &App, ctx: &Ctx, width: u16) -> String {
     if app.game.promotion.is_some() {
-        "click a piece, or ←/→ and enter   esc cancel"
-    } else if width >= 92 {
-        "click or drag to move   arrows/hjkl   f flip   p pieces   m mouse   r resign   d draw   q lobby"
-    } else if width >= 62 {
-        "click or drag   f flip   p pieces   r resign   d draw   q lobby"
+        return "click a piece, or ←/→ and enter   esc cancel".into();
+    }
+    let chat = if ctx.has_chat() { "t chat   " } else { "" };
+    let extra = chat.chars().count() as u16;
+    if width >= 92 + extra {
+        format!(
+            "click or drag to move   arrows/hjkl   f flip   p pieces   m mouse   r resign   d draw   {chat}q lobby"
+        )
+    } else if width >= 62 + extra {
+        format!("click or drag   f flip   p pieces   r resign   d draw   {chat}q lobby")
     } else {
-        "click to move   f flip   r resign   q lobby"
+        format!("click to move   f flip   r resign   {chat}q lobby")
     }
 }
 

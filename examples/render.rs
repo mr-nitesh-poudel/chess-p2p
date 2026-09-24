@@ -125,6 +125,32 @@ fn main() {
     hosting.ctx.copied = Some(Copied::Terminal);
     dump("hosting, waiting", &hosting, 100, 30);
 
+    // Someone to talk to. Nothing is listening on the other end of the
+    // channel, which is fine for a picture.
+    let (out, _peer_hears) = tokio::sync::mpsc::unbounded_channel();
+    let net = tui_tui::net::Net {
+        peer: iroh::SecretKey::generate().public(),
+        out,
+    };
+    let mut chatting = Table::local(App::local());
+    chatting.play.piece_style = PieceStyle::Art;
+    chatting.play.me = Some(Color::White);
+    chatting.attach(net, "bob");
+    for m in ["e2e4", "e7e5", "g1f3"] {
+        chatting.play.game.play_uci(m).unwrap();
+    }
+    chatting
+        .ctx
+        .chat
+        .heard("good luck! been a while since I played the italian".into());
+    chatting.ctx.chat.said("you too, go easy on me".into());
+    chatting.ctx.chat.heard("no promises".into());
+    chatting.ctx.chat.heard("your move btw".into());
+    chatting.ctx.chat.focus();
+    chatting.ctx.chat.input = "thinking about it".into();
+    dump("chatting", &chatting, 140, 40);
+    dump("chatting, classic 80x24", &chatting, 80, 24);
+
     let mut lobby = Lobby::new();
     lobby.name = "ace".into();
     dump_lobby("lobby, first run", &lobby, 80, 30);

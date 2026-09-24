@@ -64,12 +64,23 @@ pub fn connection_lines(ctx: &Ctx) -> Vec<Line<'static>> {
 }
 
 /// The bottom line of the screen. The table's own question comes first, then
-/// the game's, and with neither the game's key hints.
+/// the chat's keys while the player is typing, then the game's question, and
+/// with none of those the game's key hints.
 pub fn footer(f: &mut Frame, area: Rect, ctx: &Ctx, question: Option<&str>, hints: &str) {
     // A question waiting on an answer stands out from the usual key list.
     let asking = Style::default().fg(CAPTURE).add_modifier(Modifier::BOLD);
     let line = if ctx.confirm_leave {
         Line::styled("leave this game?   y leave   n stay", asking)
+    } else if ctx.chat.focused {
+        let send = if ctx.is_networked() {
+            "enter send   "
+        } else {
+            ""
+        };
+        Line::styled(
+            format!("{send}↑/↓ scroll   esc back to the game"),
+            Style::default().fg(MUTED),
+        )
     } else if let Some(question) = question {
         Line::styled(question.to_string(), asking)
     } else {

@@ -79,6 +79,7 @@ down. The keyboard does everything too:
 | `m` | hand the mouse back to your terminal |
 | `c` | copy your share code |
 | `r` / `d` | resign / offer a draw |
+| `t` | chat with your opponent (or click the chat panel); `enter` sends, `esc` goes back to the board |
 | `q` / `esc` | leave (it asks first) |
 
 Promotion opens a prompt: click, or `←`/`→` and `enter`, or just press
