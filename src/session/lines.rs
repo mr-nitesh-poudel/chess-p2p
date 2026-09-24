@@ -35,39 +35,38 @@ impl<R: AsyncRead + Unpin> Lines<R> {
     /// ends. A line that runs past [`MAX_LINE`], or is not UTF-8, is an error:
     /// there is no sensible way to carry on reading from someone sending
     /// either.
+    ///
+    /// Cancel safe, so it can race other work in `select!`: a read given up
+    /// on keeps whatever part of a line it had, and the next picks up from
+    /// there. That part counts towards the limit.
     pub async fn next_line(&mut self) -> io::Result<Option<String>> {
-        self.buf.clear();
         // One byte over the limit, so a line of exactly MAX_LINE bytes still
         // has room for its newline.
-        let limit = MAX_LINE as u64 + 1;
+        let limit = MAX_LINE + 1;
+        let room = limit.saturating_sub(self.buf.len()) as u64;
         let read = (&mut self.inner)
-            .take(limit)
+            .take(room)
             .read_until(b'\n', &mut self.buf)
             .await?;
-        if read == 0 {
-            return Ok(None);
-        }
         if self.buf.last() == Some(&b'\n') {
             self.buf.pop();
             if self.buf.last() == Some(&b'\r') {
                 self.buf.pop();
             }
-        } else if read as u64 == limit {
+        } else if self.buf.len() >= limit {
+            self.buf.clear();
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("peer sent a line over {MAX_LINE} bytes"),
+                format!("a line over {MAX_LINE} bytes"),
             ));
+        } else if read == 0 && self.buf.is_empty() {
+            return Ok(None);
         }
         // Otherwise the stream ended partway through a line; hand back what
         // there was, as tokio's `Lines` does.
         String::from_utf8(std::mem::take(&mut self.buf))
             .map(Some)
-            .map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "peer sent a line that is not UTF-8",
-                )
-            })
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "a line that is not UTF-8"))
     }
 }
 
@@ -123,6 +122,42 @@ mod tests {
             "held {} bytes",
             lines.buf.capacity()
         );
+    }
+
+    #[tokio::test]
+    async fn half_a_line_survives_a_read_that_was_given_up_on() {
+        // What `select!` does when another branch wins: the read is dropped
+        // after it has already taken the first half of a line.
+        use tokio::io::AsyncWriteExt;
+        let (mut peer, us) = tokio::io::duplex(64);
+        let mut lines = Lines::new(us);
+        peer.write_all(b"move e2").await.unwrap();
+        let gave_up =
+            tokio::time::timeout(std::time::Duration::from_millis(50), lines.next_line()).await;
+        assert!(gave_up.is_err(), "nothing whole to read yet");
+        peer.write_all(b"e4\nresign\n").await.unwrap();
+        assert_eq!(
+            lines.next_line().await.unwrap().as_deref(),
+            Some("move e2e4")
+        );
+        assert_eq!(lines.next_line().await.unwrap().as_deref(), Some("resign"));
+    }
+
+    #[tokio::test]
+    async fn the_limit_counts_what_was_read_before_a_read_was_given_up_on() {
+        use tokio::io::AsyncWriteExt;
+        let (mut peer, us) = tokio::io::duplex(2 * MAX_LINE);
+        let mut lines = Lines::new(us);
+        peer.write_all(&vec![b'x'; MAX_LINE]).await.unwrap();
+        let gave_up =
+            tokio::time::timeout(std::time::Duration::from_millis(50), lines.next_line()).await;
+        assert!(gave_up.is_err());
+        peer.write_all(b"xx\n").await.unwrap();
+        let err = lines
+            .next_line()
+            .await
+            .expect_err("over the limit in two goes");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
     #[tokio::test]
