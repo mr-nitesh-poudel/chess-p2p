@@ -43,7 +43,7 @@ impl Play for Tally {
     }
 
     fn draw(&self, f: &mut Frame, ctx: &Ctx) {
-        chrome::footer(f, f.area(), ctx, None, "+ counts   q leaves");
+        chrome::footer(f, f.area(), ctx, None, &[("+", "counts"), ("q", "leaves")]);
     }
 
     fn in_play(&self) -> bool {

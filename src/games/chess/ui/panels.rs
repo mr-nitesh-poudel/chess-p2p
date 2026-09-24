@@ -1,104 +1,307 @@
-//! Everything around the board: the trays of captured pieces, the sidebar,
-//! the key hints, the promotion prompt and the verdict.
+//! Everything around the board: the players' cards, the moves and the
+//! state of the game in the sidebar, the keys, the promotion prompt and the
+//! verdict.
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Wrap};
-use shakmaty::{Color as Side, Piece};
+use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph, Wrap};
+use shakmaty::{Color as Side, Piece, Position, Role};
 
 use super::board::{canvas_dots, canvas_piece};
-use super::pieces::{piece_cell, piece_rows};
-use super::{
-    FLASH, GUTTER, Geometry, LIGHT, MATE_RED, PIECE_BLACK, PIECE_WHITE, PieceStyle, VERDICT_BG,
-    side_name,
-};
-use crate::games::chess::app::{App, Ending, Finale};
+use super::pieces::piece_cell;
+use super::{FLASH, Geometry, LIGHT, MATE_RED, PieceStyle, VERDICT_BG, side_name};
+use crate::games::chess::app::{App, Ending, Finale, Tone};
 use crate::games::chess::canvas;
 use crate::games::chess::rules::PROMOTION_ROLES;
-use crate::games::{Ctx, chrome};
-use crate::ui::{CURSOR, MUTED, blend, centred};
+use crate::games::{Conn, Ctx, chrome};
+use crate::ui::{BRIGHT, CAPTURE, CURSOR, MUTED, SELECTED, blend, centred, keycaps};
 
-/// The pieces `side` has captured, plus their material edge if they have one.
-pub(super) fn draw_tray(f: &mut Frame, area: Rect, app: &App, side: Side) {
-    let taken = app.game.captured(!side);
-    let style = match app.piece_style {
-        PieceStyle::Letter | PieceStyle::BigLetter => PieceStyle::Letter,
-        _ => PieceStyle::Figurine,
-    };
-    let mut text: String = taken
-        .iter()
-        .map(|r| piece_rows(*r, style, 1).remove(0))
-        .collect();
+/// Words that should be read, but are not the point.
+const QUIET: Color = Color::Rgb(186, 182, 176);
+/// Behind the latest move.
+const HIGHLIGHT: Color = Color::Rgb(58, 54, 50);
 
-    let edge = app.game.material_edge();
-    let ahead = if side == Side::White { edge } else { -edge };
-    if ahead > 0 {
-        text.push_str(&format!("  +{ahead}"));
+/// A glow behind the state line, and the colour of its words, for each tone.
+fn tone_style(tone: Tone) -> Style {
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    match tone {
+        Tone::Go => bold
+            .bg(Color::Rgb(40, 58, 34))
+            .fg(Color::Rgb(164, 216, 134)),
+        Tone::Wait => Style::default().fg(MUTED),
+        Tone::Offer | Tone::Warn => bold.bg(Color::Rgb(66, 52, 22)).fg(CURSOR),
+        Tone::Alert => bold
+            .bg(Color::Rgb(88, 26, 22))
+            .fg(Color::Rgb(255, 128, 108)),
+        Tone::Done => bold.bg(Color::Rgb(48, 44, 40)).fg(BRIGHT),
     }
-
-    // The tray holds the opponent's pieces, so it takes the opponent's colour.
-    let fg = if side == Side::White {
-        PIECE_BLACK
-    } else {
-        PIECE_WHITE
-    };
-    let line = Line::from(vec![
-        Span::raw(" ".repeat(GUTTER.into())),
-        Span::styled(text, Style::default().fg(fg)),
-    ]);
-    f.render_widget(Paragraph::new(line), area);
 }
 
+/// The sidebar: a card for each player, the side at the top of the board
+/// above and the one at the bottom below, with the moves between them and
+/// the state of the game just above the bottom card.
 pub(super) fn draw_sidebar(f: &mut Frame, area: Rect, app: &App, ctx: &Ctx) {
-    let [status, moves] =
-        Layout::vertical([Constraint::Length(12), Constraint::Min(3)]).areas(area);
+    let bottom_side = if app.flipped {
+        Side::Black
+    } else {
+        Side::White
+    };
+    let inner_w = area.width.saturating_sub(4);
+    let top = card(app, ctx, !bottom_side, inner_w);
+    let bottom = card(app, ctx, bottom_side, inner_w);
+    let [top_area, moves, state, bottom_area] = Layout::vertical([
+        Constraint::Length(top.lines.len() as u16 + 2),
+        Constraint::Min(3),
+        Constraint::Length(1),
+        Constraint::Length(bottom.lines.len() as u16 + 2),
+    ])
+    .areas(area);
 
-    let mut lines = Vec::new();
-    match app.me {
-        Some(c) => lines.push(Line::from(vec![
-            Span::styled("you  ", Style::default().fg(MUTED)),
-            Span::raw(side_name(c)),
-        ])),
-        None => lines.push(Line::from(vec![
-            Span::styled("mode ", Style::default().fg(MUTED)),
-            Span::raw("hot-seat"),
-        ])),
+    draw_card(f, top_area, top);
+    draw_moves(f, moves, app);
+    draw_state(f, state, app, ctx);
+    draw_card(f, bottom_area, bottom);
+}
+
+/// One player's card, before it is drawn.
+struct Card {
+    title: String,
+    /// Whose turn it is: the card is lit.
+    lit: bool,
+    dot: Option<Span<'static>>,
+    lines: Vec<Line<'static>>,
+}
+
+fn card(app: &App, ctx: &Ctx, side: Side, width: u16) -> Card {
+    let opponent = app.me.is_some_and(|me| me != side);
+    let to_move = app.in_play() && app.game.turn() == side;
+    let muted = Style::default().fg(MUTED);
+
+    // With nobody there yet, the opponent's card is about getting them here.
+    if opponent && !matches!(ctx.conn, Conn::Playing | Conn::Lost(_)) {
+        let title = if ctx.conn == Conn::Waiting {
+            "share this code"
+        } else {
+            "opponent"
+        };
+        return Card {
+            title: title.into(),
+            lit: ctx.conn == Conn::Waiting,
+            dot: chrome::connection_dot(ctx),
+            lines: chrome::connection_lines(ctx),
+        };
     }
 
-    lines.push(Line::from(vec![
-        Span::styled("turn ", Style::default().fg(MUTED)),
-        Span::raw(side_name(app.game.turn())),
-    ]));
+    let title = match app.me {
+        None => side_name(side).to_string(),
+        Some(_) if opponent => ctx.peer_label(),
+        Some(_) => "you".into(),
+    };
+    let letters = matches!(app.piece_style, PieceStyle::Letter | PieceStyle::BigLetter);
+    let king = figurine(Role::King, side, letters).to_string();
+    // In hot-seat the card's title already names the side.
+    let mut who = vec![Span::styled(king, Style::default().fg(BRIGHT))];
+    if app.me.is_some() {
+        who.push(Span::raw(format!(" {}", side_name(side))));
+    }
+    let turn = if to_move {
+        vec![Span::styled(
+            "to move",
+            Style::default().fg(CURSOR).add_modifier(Modifier::BOLD),
+        )]
+    } else {
+        vec![]
+    };
 
-    let (state, style) = app.state_line(ctx);
-    lines.push(Line::from(vec![
-        Span::raw("     "),
-        Span::styled(state, style),
-    ]));
+    // What this side has taken, in the other side's pieces, and how far
+    // ahead on material that leaves them.
+    let taken: String = app
+        .game
+        .captured(!side)
+        .into_iter()
+        .map(|r| figurine(r, !side, letters))
+        .collect();
+    let edge = app.game.material_edge();
+    let ahead = if side == Side::White { edge } else { -edge };
+    let captures = if taken.is_empty() {
+        vec![Span::styled("no captures", muted)]
+    } else {
+        vec![Span::styled(taken, Style::default().fg(QUIET))]
+    };
+    let lead = if ahead > 0 {
+        vec![Span::styled(
+            format!("+{ahead}"),
+            Style::default().fg(SELECTED).add_modifier(Modifier::BOLD),
+        )]
+    } else {
+        vec![]
+    };
 
-    lines.push(Line::raw(""));
-    lines.extend(chrome::connection_lines(ctx));
+    let mut lines = vec![spread(who, turn, width), spread(captures, lead, width)];
+    if opponent && let Conn::Lost(why) = &ctx.conn {
+        lines.push(Line::styled(why.clone(), Style::default().fg(CAPTURE)));
+    }
+    Card {
+        title,
+        lit: to_move,
+        dot: if opponent {
+            chrome::connection_dot(ctx)
+        } else {
+            None
+        },
+        lines,
+    }
+}
 
-    let block = Block::bordered()
+fn draw_card(f: &mut Frame, area: Rect, card: Card) {
+    let (border, title) = if card.lit {
+        (
+            Style::default().fg(CURSOR),
+            Style::default().fg(BRIGHT).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        (Style::default().fg(MUTED), Style::default().fg(QUIET))
+    };
+    let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(MUTED))
-        .title(Line::from(" game "));
+        .border_style(border)
+        .padding(Padding::horizontal(1))
+        .title(Line::styled(format!(" {} ", card.title), title));
+    if let Some(dot) = card.dot {
+        block = block.title(Line::from(vec![Span::raw(" "), dot, Span::raw(" ")]).right_aligned());
+    }
     f.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
+        Paragraph::new(card.lines)
+            .wrap(Wrap { trim: true })
             .block(block),
-        status,
+        area,
     );
+}
 
-    draw_moves(f, moves, app);
+/// `left` at the start of a line `width` wide and `right` at its end, or
+/// straight after `left` if there is no room between.
+fn spread(left: Vec<Span<'static>>, right: Vec<Span<'static>>, width: u16) -> Line<'static> {
+    let used = Line::from(left.clone()).width() + Line::from(right.clone()).width();
+    let gap = usize::from(width).saturating_sub(used).max(1);
+    let mut spans = left;
+    if !right.is_empty() {
+        spans.push(Span::raw(" ".repeat(gap)));
+        spans.extend(right);
+    }
+    Line::from(spans)
+}
+
+/// A piece as one character: a figurine, outlined for white and solid for
+/// black, or its letter where figurines come out double width.
+fn figurine(role: Role, side: Side, letters: bool) -> char {
+    if letters {
+        let c = role.upper_char();
+        return if side == Side::White {
+            c
+        } else {
+            c.to_ascii_lowercase()
+        };
+    }
+    let white = side == Side::White;
+    match role {
+        Role::King => {
+            if white {
+                '♔'
+            } else {
+                '♚'
+            }
+        }
+        Role::Queen => {
+            if white {
+                '♕'
+            } else {
+                '♛'
+            }
+        }
+        Role::Rook => {
+            if white {
+                '♖'
+            } else {
+                '♜'
+            }
+        }
+        Role::Bishop => {
+            if white {
+                '♗'
+            } else {
+                '♝'
+            }
+        }
+        Role::Knight => {
+            if white {
+                '♘'
+            } else {
+                '♞'
+            }
+        }
+        Role::Pawn => {
+            if white {
+                '♙'
+            } else {
+                '♟'
+            }
+        }
+    }
+}
+
+/// A move as written in the list: its piece letters as figurines of the
+/// side that made it, unless the pieces are being drawn as letters.
+fn written(san: &str, side: Side, letters: bool) -> String {
+    if letters {
+        return san.to_string();
+    }
+    san.chars()
+        .map(|c| match Role::from_char(c) {
+            Some(role) if c.is_ascii_uppercase() => figurine(role, side, false),
+            _ => c,
+        })
+        .collect()
+}
+
+/// The score and how it came about, once the game is decided.
+fn result(app: &App) -> Option<(&'static str, &'static str)> {
+    let win = |winner: Side| {
+        if winner == Side::White {
+            "1–0"
+        } else {
+            "0–1"
+        }
+    };
+    let pos = &app.game.pos;
+    if let Some(loser) = app.game.resigned {
+        Some((win(!loser), "resignation"))
+    } else if pos.is_checkmate() {
+        Some((win(!app.game.turn()), "checkmate"))
+    } else if app.draw_agreed {
+        Some(("½–½", "agreed"))
+    } else if pos.is_stalemate() {
+        Some(("½–½", "stalemate"))
+    } else if pos.is_insufficient_material() {
+        Some(("½–½", "insufficient material"))
+    } else {
+        None
+    }
 }
 
 fn draw_moves(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(MUTED))
-        .title(Line::from(" moves "));
-    let inner_h = area.height.saturating_sub(2) as usize;
+        .padding(Padding::horizontal(1))
+        .title(Line::styled(" moves ", Style::default().fg(QUIET)));
+    let inner_h = usize::from(area.height.saturating_sub(2));
+    let muted = Style::default().fg(MUTED);
+    let latest = Style::default()
+        .fg(CURSOR)
+        .bg(HIGHLIGHT)
+        .add_modifier(Modifier::BOLD);
+    let letters = matches!(app.piece_style, PieceStyle::Letter | PieceStyle::BigLetter);
+    let last = app.game.history.len().checked_sub(1);
 
     let mut lines: Vec<Line> = app
         .game
@@ -106,44 +309,91 @@ fn draw_moves(f: &mut Frame, area: Rect, app: &App) {
         .chunks(2)
         .enumerate()
         .map(|(i, pair)| {
-            let black = pair.get(1).map(String::as_str).unwrap_or("");
-            Line::from(vec![
-                Span::styled(format!("{:>3}. ", i + 1), Style::default().fg(MUTED)),
-                Span::raw(format!("{:<8}", pair[0])),
-                Span::raw(black.to_string()),
-            ])
+            let mut spans = vec![Span::styled(format!("{:>3}. ", i + 1), muted)];
+            for (j, san) in pair.iter().enumerate() {
+                let side = if j == 0 { Side::White } else { Side::Black };
+                let text = written(san, side, letters);
+                let style = if Some(2 * i + j) == last {
+                    latest
+                } else {
+                    Style::default().fg(QUIET)
+                };
+                spans.push(Span::styled(text.clone(), style));
+                if j == 0 {
+                    let pad = 8usize.saturating_sub(text.chars().count());
+                    spans.push(Span::raw(" ".repeat(pad)));
+                }
+            }
+            Line::from(spans)
         })
         .collect();
+    if lines.is_empty() {
+        lines.push(Line::styled("no moves yet", muted));
+    }
+    if let Some((score, how)) = result(app) {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("     {score}"),
+                Style::default().fg(BRIGHT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!("  {how}"), muted),
+        ]));
+    }
 
-    // Keep the tail of the game visible.
-    if lines.len() > inner_h {
-        lines.drain(..lines.len() - inner_h);
+    // Keep the tail of the game visible, and say how much is above it.
+    if lines.len() > inner_h && inner_h > 1 {
+        let hidden = lines.len() - (inner_h - 1);
+        lines.drain(..hidden);
+        lines.insert(0, Line::styled(format!("↑ {hidden} earlier"), muted));
     }
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-pub(super) fn draw_footer(f: &mut Frame, area: Rect, app: &App, ctx: &Ctx) {
-    let question = app
-        .confirm_resign
-        .then_some("resign this game?   y resign   n cancel");
-    chrome::footer(f, area, ctx, question, &footer_keys(app, ctx, area.width));
+/// Where the game stands, on a band of colour that says how much it
+/// matters. A draw offer carries the key that accepts it.
+fn draw_state(f: &mut Frame, area: Rect, app: &App, ctx: &Ctx) {
+    let (text, tone) = app.state_line(ctx);
+    let style = tone_style(tone);
+    let text = if tone == Tone::Alert {
+        text.to_uppercase()
+    } else {
+        text
+    };
+    let mut spans = vec![Span::styled(format!(" {text} "), style)];
+    if tone == Tone::Offer {
+        spans.push(Span::raw("  "));
+        spans.extend(keycaps(&[("d", "accept")]));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans).centered()), area);
 }
 
-fn footer_keys(app: &App, ctx: &Ctx, width: u16) -> String {
-    if app.game.promotion.is_some() {
-        return "click a piece, or ←/→ and enter   esc cancel".into();
-    }
-    let chat = if ctx.has_chat() { "t chat   " } else { "" };
-    let extra = chat.chars().count() as u16;
-    if width >= 92 + extra {
-        format!(
-            "click or drag to move   arrows/hjkl   f flip   p pieces   m mouse   r resign   d draw   {chat}q lobby"
-        )
-    } else if width >= 62 + extra {
-        format!("click or drag   f flip   p pieces   r resign   d draw   {chat}q lobby")
+pub(super) fn draw_footer(f: &mut Frame, area: Rect, app: &App, ctx: &Ctx) {
+    let resign: &[(&str, &str)] = &[("y", "resign"), ("n", "cancel")];
+    let question = app.confirm_resign.then_some(("resign this game?", resign));
+    let keys: Vec<(&str, &str)> = if app.game.promotion.is_some() {
+        vec![
+            ("click/←→", "choose"),
+            ("enter", "promote"),
+            ("esc", "cancel"),
+        ]
     } else {
-        format!("click to move   f flip   r resign   {chat}q lobby")
-    }
+        // The most useful first, as the narrowest screens keep only those.
+        let mut keys = vec![];
+        if app.in_play() {
+            keys.extend([("click", "move"), ("r", "resign"), ("d", "draw")]);
+        }
+        if ctx.has_chat() {
+            keys.push(("t", "chat"));
+        }
+        keys.extend([
+            ("f", "flip"),
+            ("p", "pieces"),
+            ("m", "mouse"),
+            ("q", "lobby"),
+        ]);
+        keys
+    };
+    chrome::footer(f, area, ctx, question, &keys);
 }
 
 pub(super) fn draw_promotion(f: &mut Frame, g: &Geometry, app: &App) {

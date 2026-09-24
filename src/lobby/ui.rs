@@ -13,7 +13,7 @@ use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 
 use super::{Entry, Field, Item, Lobby, Row};
 use crate::games::Kind;
-use crate::ui::{CAPTURE, CURSOR, MUTED, SELECTED, blend, centred};
+use crate::ui::{BRIGHT, CAPTURE, CURSOR, MUTED, SELECTED, blend, centred, keycaps, keycaps_fit};
 
 /// Where the lobby's pieces sit. [`LobbyGeometry::rows`] lines up with
 /// [`Lobby::rows`], so what is drawn and what is clicked cannot drift apart.
@@ -57,8 +57,6 @@ const FLOOR_DARK: Color = Color::Rgb(137, 99, 73);
 const NIGHT: Color = Color::Rgb(0, 0, 0);
 /// Unchosen items: readable, but a step back from the chosen one.
 const QUIET: Color = Color::Rgb(186, 182, 176);
-const BRIGHT: Color = Color::Rgb(250, 248, 244);
-const KEYCAP: Color = Color::Rgb(72, 70, 68);
 /// The chosen item, when there is no room to box it.
 const HIGHLIGHT: Color = Color::Rgb(58, 54, 50);
 
@@ -519,21 +517,6 @@ fn draw_status(f: &mut Frame, g: &LobbyGeometry, lobby: &Lobby, rows: &[Row]) {
     }
 }
 
-/// Keys as little caps, each followed by what it does.
-fn keycaps(keys: &[(&str, &str)]) -> Vec<Span<'static>> {
-    let cap = Style::default().bg(KEYCAP).fg(BRIGHT);
-    let muted = Style::default().fg(MUTED);
-    let mut spans = Vec::new();
-    for (i, (key, what)) in keys.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::raw("  "));
-        }
-        spans.push(Span::styled(format!(" {key} "), cap));
-        spans.push(Span::styled(format!(" {what}"), muted));
-    }
-    spans
-}
-
 fn draw_footer(f: &mut Frame, area: Rect, lobby: &Lobby, rows: &[Row]) {
     let on_friend = matches!(rows.get(lobby.selected), Some(Row::Friend(_)));
     let keys: &[(&str, &str)] = if lobby.invite.is_some() {
@@ -566,16 +549,13 @@ fn draw_footer(f: &mut Frame, area: Rect, lobby: &Lobby, rows: &[Row]) {
     } else {
         Some(format!("playing as {} ", lobby.name))
     };
-    let room = usize::from(area.width).saturating_sub(who.as_ref().map_or(0, |w| w.len() + 2));
-    let mut shown = keys.len();
-    while shown > 0 && Line::from(keycaps(&keys[..shown])).width() + 1 > room {
-        shown -= 1;
-    }
+    let who_w = who.as_ref().map_or(0, |w| w.chars().count() as u16 + 2);
     let mut left = vec![Span::raw(" ")];
-    left.extend(keycaps(&keys[..shown]));
+    left.extend(keycaps_fit(keys, area.width.saturating_sub(who_w + 1)));
+    let used = Line::from(left.clone()).width() as u16;
     f.render_widget(Paragraph::new(Line::from(left)), area);
     if let Some(who) = who
-        && shown > 0
+        && used + who_w <= area.width
     {
         f.render_widget(
             Paragraph::new(Line::styled(who, Style::default().fg(MUTED)).right_aligned()),

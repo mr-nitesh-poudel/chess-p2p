@@ -3,7 +3,6 @@
 use std::time::{Duration, Instant};
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use ratatui::style::{Color as Paint, Modifier, Style};
 use shakmaty::{Color, Move, Piece, Position, Role, Square};
 
 use super::protocol::Msg;
@@ -74,6 +73,27 @@ pub struct Finale {
     pub fallen: f64,
     /// How much of the verdict has been spelled out, 0 to 1, once it shows.
     pub banner: Option<f32>,
+}
+
+/// How loudly the state line should speak.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tone {
+    /// Someone at this keyboard is to move.
+    Go,
+    /// Waiting on the other side.
+    Wait,
+    /// The opponent is asking something.
+    Offer,
+    /// Something went wrong.
+    Warn,
+    /// The king is in check.
+    Alert,
+    /// The game is decided.
+    Done,
+}
+
+fn side_name(c: Color) -> &'static str {
+    if c == Color::White { "white" } else { "black" }
 }
 
 /// A piece on its way from one square to another.
@@ -332,59 +352,48 @@ impl App {
         self.me.is_none_or(|me| me == self.game.turn())
     }
 
-    /// The one-line description of where the game stands.
-    pub fn state_line(&self, ctx: &Ctx) -> (String, Style) {
-        let bold = Style::default().add_modifier(Modifier::BOLD);
-        let win = bold.fg(Paint::Rgb(124, 176, 95));
-        let warn = Style::default().fg(Paint::Rgb(209, 106, 88));
-
+    /// The one-line description of where the game stands, and how loudly
+    /// to say it.
+    pub fn state_line(&self, ctx: &Ctx) -> (String, Tone) {
         if let Some(loser) = self.game.resigned {
-            let winner = if loser == Color::White {
-                "black"
-            } else {
-                "white"
-            };
-            return (format!("{winner} wins by resignation"), win);
+            return (
+                format!("{} wins by resignation", side_name(!loser)),
+                Tone::Done,
+            );
         }
         if self.draw_agreed {
-            return ("draw agreed".into(), bold);
+            return ("draw agreed".into(), Tone::Done);
         }
         if self.game.pos.is_checkmate() {
-            let winner = if self.game.turn() == Color::White {
-                "black"
-            } else {
-                "white"
-            };
-            return (format!("checkmate — {winner} wins"), win);
+            let winner = side_name(!self.game.turn());
+            return (format!("checkmate · {winner} wins"), Tone::Done);
         }
         if self.game.pos.is_stalemate() {
-            return ("stalemate — draw".into(), bold);
+            return ("stalemate · draw".into(), Tone::Done);
         }
         if self.game.pos.is_insufficient_material() {
-            return ("draw — insufficient material".into(), bold);
+            return ("insufficient material · draw".into(), Tone::Done);
         }
         if let Some(note) = &ctx.note {
-            return (note.clone(), warn);
+            return (note.clone(), Tone::Warn);
         }
         if self.draw_offered {
-            return ("draw offered — press d to accept".into(), warn);
-        }
-        if self.draw_sent {
-            return (
-                "draw offer sent".into(),
-                Style::default().fg(Paint::Rgb(128, 128, 128)),
-            );
+            return ("draw offered".into(), Tone::Offer);
         }
         if self.game.pos.is_check() {
-            return ("check".into(), warn);
+            return ("check".into(), Tone::Alert);
+        }
+        if self.draw_sent {
+            return ("draw offer sent".into(), Tone::Wait);
+        }
+        if self.me.is_none() {
+            let turn = side_name(self.game.turn());
+            return (format!("{turn} to move"), Tone::Go);
         }
         if !self.my_turn() {
-            return (
-                "waiting for opponent".into(),
-                Style::default().fg(Paint::Rgb(128, 128, 128)),
-            );
+            return (format!("{} is thinking…", ctx.peer_label()), Tone::Wait);
         }
-        ("your move".into(), Style::default())
+        ("your move".into(), Tone::Go)
     }
 
     /// A key the table passed on. Leaving, the mouse and the share code are
